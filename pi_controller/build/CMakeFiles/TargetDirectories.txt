@@ -1,5 +1,0 @@
-/home/whoosh/camera-control/pi_controller/build/CMakeFiles/ccu_daemon.dir
-/home/whoosh/camera-control/pi_controller/build/CMakeFiles/ccu_diag.dir
-/home/whoosh/camera-control/pi_controller/build/CMakeFiles/ccu_cli.dir
-/home/whoosh/camera-control/pi_controller/build/CMakeFiles/edit_cache.dir
-/home/whoosh/camera-control/pi_controller/build/CMakeFiles/rebuild_cache.dir
