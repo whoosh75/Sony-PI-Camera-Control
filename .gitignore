@@ -1,0 +1,58 @@
+# Ignore build artifacts
+/pi_controller/build/
+/build/
+
+# CMake artefacts
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Object and binary files
+*.o
+*.obj
+*.out
+*.exe
+*.so
+*.a
+*.dll
+
+# Logs, captures, traces and dumps
+*.log
+*.pcap
+*.core
+*.dmp
+gdb_*.log
+lddebug_*.log
+strace_*
+*.trace
+
+# Temporary and editor files
+*~
+*.swp
+*.tmp
+*.bak
+
+# IDE/config
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Documentation build
+/docs/_build/
+
+# Local test artifacts
+/tmp_*
+*.expect
+
+# Keep this repo's docs and scripts tracked
+!SHORTCUTS.md
