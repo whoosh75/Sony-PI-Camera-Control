@@ -237,6 +237,11 @@ public:
     bool is_getfingerprint() { return !m_fingerprint.empty(); };
     bool is_setpassword() { return !m_userPassword.empty(); };
 
+    // Minimal control helpers for headless use
+    void set_user_password(const std::string &pw);
+    void set_auto_accept_fingerprint(bool v);
+    SCRSDK::CrDeviceHandle get_device_handle() const { return (SCRSDK::CrDeviceHandle)m_device_handle; }
+
     // Monitoring
     bool isMonitoringFunctionSupport();
     void setMonitoringDeriverySetting();
@@ -330,6 +335,7 @@ private:
     MediaProfileList m_mediaprofileList;
     std::string m_fingerprint;
     std::string m_userPassword;
+    bool m_autoAcceptFingerprint;
     SCRSDK::CrDeviceProperty* m_bodySerialNumberProp;
     SCRSDK::CrDeviceProperty* m_lensModelNameProp;
     SCRSDK::CrDeviceProperty* m_recordingSettingFileNameProp;

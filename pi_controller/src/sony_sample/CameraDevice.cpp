@@ -95,6 +95,7 @@ CameraDevice::CameraDevice(std::int32_t no, SCRSDK::ICrCameraObjectInfo const* c
     , m_spontaneous_disconnection(false)
     , m_fingerprint("")
     , m_userPassword("")
+    , m_autoAcceptFingerprint(false)
     , m_bodySerialNumberProp(nullptr)
     , m_lensModelNameProp(nullptr)
     , m_recordingSettingFileNameProp(nullptr)
@@ -160,13 +161,18 @@ bool CameraDevice::connect(SCRSDK::CrSdkControlMode openMode, SCRSDK::CrReconnec
             if (resFp)
             {
                 tout << "fingerprint: \n" << m_fingerprint.c_str() << std::endl;
-                tout << std::endl << "Are you sure you want to continue connecting ? (y/n) > ";
-                text yesno;
-                std::getline(cli::tin, yesno);
-                if (yesno != TEXT("y"))
-                {
-                    m_fingerprint.clear();
-                    return false;
+                // Support headless auto-accept via env or explicit flag
+                if (m_autoAcceptFingerprint || (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1')) {
+                    tout << "Auto-accepting fingerprint (SONY_ACCEPT_FINGERPRINT)\n";
+                } else {
+                    tout << std::endl << "Are you sure you want to continue connecting ? (y/n) > ";
+                    text yesno;
+                    std::getline(cli::tin, yesno);
+                    if (yesno != TEXT("y"))
+                    {
+                        m_fingerprint.clear();
+                        return false;
+                    }
                 }
             }
         }
@@ -268,6 +274,18 @@ bool CameraDevice::release()
     }
     return true;
 }
+
+// Minimal helpers for headless operation
+void CameraDevice::set_user_password(const std::string &pw)
+{
+    m_userPassword = pw;
+}
+
+void CameraDevice::set_auto_accept_fingerprint(bool v)
+{
+    m_autoAcceptFingerprint = v;
+}
+
 
 CrInt32u CameraDevice::get_sshsupport()
 {

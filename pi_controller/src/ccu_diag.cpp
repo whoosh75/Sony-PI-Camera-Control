@@ -4,9 +4,11 @@
 #include <thread>
 #include "CRSDK/CameraRemote_SDK.h"
 
+#define MSEARCH_ENB  // Enable camera enumeration like RemoteCli
+
 int main() {
   std::printf("ccu_diag: Initializing CRSDK...\n");
-  if (!SCRSDK::Init(0)) {
+  if (!SCRSDK::Init()) {
     std::printf("ccu_diag: SCRSDK::Init() failed\n");
     return 1;
   }
@@ -14,7 +16,7 @@ int main() {
   SCRSDK::ICrEnumCameraObjectInfo* enumInfo = nullptr;
   const int maxAttempts = 3;
   for (int i = 0; i < maxAttempts; ++i) {
-    SCRSDK::CrError st = SCRSDK::EnumCameraObjects(&enumInfo, 3);
+    SCRSDK::CrError st = SCRSDK::EnumCameraObjects(&enumInfo);
     if (!CR_FAILED(st) && enumInfo) {
       std::printf("ccu_diag: EnumCameraObjects succeeded\n");
       break;

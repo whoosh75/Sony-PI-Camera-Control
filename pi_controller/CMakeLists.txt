@@ -12,6 +12,11 @@ add_executable(ccu_daemon
   src/protocol.cpp
   src/udp_server.cpp
   src/sony_backend.cpp
+  src/sony_sample/CrDebugString.cpp
+  src/sony_sample/CameraDevice.cpp
+  src/sony_sample/ConnectionInfo.cpp
+  src/sony_sample/MessageDefine.cpp
+  src/sony_sample/Text.cpp
 )
 
 add_executable(ccu_diag
@@ -48,6 +53,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 target_include_directories(ccu_daemon PRIVATE
   ${CRSDK_ROOT}/app
   ${CRSDK_ROOT}/app/CRSDK
+  ${CRSDK_ROOT}/external/opencv/include
   ${CMAKE_SOURCE_DIR}/src
 )
 
