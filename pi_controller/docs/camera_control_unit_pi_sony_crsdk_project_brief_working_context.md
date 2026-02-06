@@ -125,6 +125,7 @@ LD_LIBRARY_PATH="/home/whoosh/CrSDK_v2.00.00_20251030a_Linux64ARMv8/build:
 - Record start/stop on MPC-2610 using MovieRecButtonToggle (Down -> Up)
 - Retry/backoff for record start until camera is ready
 - UDP server and protocol plumbing
+- Direct CRSDK API control confirmed; CLI automation is no longer used
 
 ### Known Limits (MPC-2610 / Burano)
 
