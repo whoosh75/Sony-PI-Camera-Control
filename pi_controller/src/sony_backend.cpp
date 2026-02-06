@@ -56,6 +56,55 @@ static const char* crerror_category(SCRSDK::CrError err) {
   }
 }
 
+static std::string normalize_fingerprint(const char* data, CrInt32u len) {
+  if (!data || len == 0) return std::string();
+  std::string out(data, data + len);
+  while (out.size() % 4 != 0) {
+    out.push_back('=');
+  }
+  return out;
+}
+
+static bool connect_camera(SCRSDK::ICrCameraObjectInfo* cam,
+                           SCRSDK::IDeviceCallback* cb,
+                           const char* user,
+                           const char* pass,
+                           const char* fingerprint,
+                           CrInt32u fp_size,
+                           SCRSDK::CrDeviceHandle* out_handle) {
+  if (!out_handle) return false;
+  *out_handle = 0;
+  auto err = SCRSDK::Connect(cam, cb, out_handle,
+                             SCRSDK::CrSdkControlMode_Remote,
+                             SCRSDK::CrReconnecting_ON,
+                             user, pass, fingerprint, fp_size);
+  if (!CR_FAILED(err) && *out_handle != 0) {
+    std::printf("[SonyBackend] Connect succeeded (handle=%lld)\n", (long long)*out_handle);
+    return true;
+  }
+  std::printf("[SonyBackend] Connect failed (0x%08X) category=%s\n",
+              (unsigned)err, crerror_category(err));
+  return false;
+}
+
+static const char* select_fingerprint(const char* env_fp,
+                                      CrInt32u env_len,
+                                      const char* cam_fp,
+                                      CrInt32u cam_len,
+                                      CrInt32u* out_len) {
+  static thread_local std::string normalized;
+  normalized.clear();
+  if (out_len) *out_len = 0;
+  if (env_fp && env_len > 0) {
+    normalized = normalize_fingerprint(env_fp, env_len);
+  } else if (cam_fp && cam_len > 0) {
+    normalized = normalize_fingerprint(cam_fp, cam_len);
+  }
+  if (normalized.empty()) return nullptr;
+  if (out_len) *out_len = (CrInt32u)normalized.size();
+  return normalized.c_str();
+}
+
 namespace ccu {
 
 SonyBackend::~SonyBackend() {
@@ -96,11 +145,11 @@ bool SonyBackend::connect_first_camera() {
   const char* cam_ip_env = std::getenv("SONY_CAMERA_IP");
   if (cam_ip_env && cam_ip_env[0]) {
     std::printf("[SonyBackend] Attempting direct IP camera info via SONY_CAMERA_IP=%s\n", cam_ip_env);
-    // Parse IP using inet_pton to avoid endianness mistakes
+    // Parse IP using inet_pton and convert to CRSDK-packed value
     in_addr ina;
     if (inet_pton(AF_INET, cam_ip_env, &ina) == 1) {
       SCRSDK::ICrCameraObjectInfo* pCam = nullptr;
-      CrInt32u ipAddr = (CrInt32u)ina.s_addr; // network byte order as returned by inet_pton
+      CrInt32u ipAddr = (CrInt32u)ntohl(ina.s_addr); // CRSDK expects first octet in bits 7..0
       std::printf("[SonyBackend] CreateCameraObjectInfoEthernetConnection(model=CrCameraDeviceModel_ILME_FX6 ip=%s numeric=%u)...\n", cam_ip_env, (unsigned)ipAddr);
       CrInt8u macBuf[6] = {0};
       // Try to obtain MAC from env (SONY_CAMERA_MAC) or ARP table for the IP
@@ -142,14 +191,14 @@ bool SonyBackend::connect_first_camera() {
         char fingerprint[4096] = {0};
         CrInt32u fpSize = (CrInt32u)sizeof(fingerprint);
         SCRSDK::CrError fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
+        std::string fp_norm;
         if (CR_FAILED(fpSt) || fpSize == 0) {
-          std::printf("[SonyBackend] GetFingerprint failed (0x%08X) -- %s\n", (unsigned)fpSt, CrErrorString(fpSt).c_str());
+          std::printf("[SonyBackend] GetFingerprint failed (0x%08X)\n", (unsigned)fpSt);
           fpSize = 0; // still attempt connect
         } else {
-          if (fpSize < sizeof(fingerprint)) fingerprint[fpSize] = '\0';
-          fingerprint[sizeof(fingerprint)-1] = '\0';
-          std::printf("[SonyBackend] Fingerprint OK (size=%u)\n", (unsigned)fpSize);
-          std::printf("[SonyBackend] fingerprint:\n%s\n", fingerprint);
+          fp_norm = normalize_fingerprint(fingerprint, fpSize);
+          std::printf("[SonyBackend] Fingerprint OK (size=%u padded=%u)\n", (unsigned)fpSize, (unsigned)fp_norm.size());
+          std::printf("[SonyBackend] fingerprint (padded):\n%s\n", fp_norm.c_str());
           const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
           if (!(accept_fp && accept_fp[0] && accept_fp[0] == '1')) {
             std::printf("[SonyBackend] Fingerprint requires acceptance. Set SONY_ACCEPT_FINGERPRINT=1 to auto-accept and connect.\n");
@@ -166,39 +215,49 @@ bool SonyBackend::connect_first_camera() {
           return false;
         }
 
-        // Create CameraDevice wrapper and reuse its connect() behaviour from the SDK sample
-        m_camera_device.reset(new cli::CameraDevice(0, camInfo));
-        m_camera_device->set_user_password(std::string(pass));
-        if (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1') {
-          m_camera_device->set_auto_accept_fingerprint(true);
+        if (!m_callback_impl) m_callback_impl = static_cast<void*>(new DeviceCallbackImpl());
+        auto* cb = static_cast<SCRSDK::IDeviceCallback*>(m_callback_impl);
+        const char* user = std::getenv("SONY_USER");
+        if (!user || !user[0]) user = nullptr;
+        const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
+        const char* env_fp = std::getenv("SONY_FINGERPRINT");
+        const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
+        CrInt32u fp_len = 0;
+        const char* fp_ptr = nullptr;
+        if (accept_fp && accept_fp[0] == '1') {
+          fp_ptr = select_fingerprint(env_fp, env_fp_len, fingerprint, fpSize, &fp_len);
+          if (env_fp && env_fp[0]) {
+            std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_len);
+          } else if (fp_ptr && fp_len > 0) {
+            std::printf("[SonyBackend] Using fingerprint from GetFingerprint (len=%u)\n", (unsigned)fp_len);
+          }
         }
 
         const int max_attempts = 5;
         bool cd_connected = false;
         for (int attempt = 1; attempt <= max_attempts; ++attempt) {
-          if (m_camera_device->connect(SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON)) {
-            m_device_handle = m_camera_device->get_device_handle();
-            if (m_device_handle != 0) {
-              m_connected = true;
-              std::printf("[SonyBackend] CameraDevice::connect() succeeded on attempt %d\n", attempt);
-              cd_connected = true;
-              break;
-            }
+          SCRSDK::CrDeviceHandle h = 0;
+          if (connect_camera(camInfo, cb, user, pass, fp_ptr, fp_len, &h)) {
+            m_device_handle = h;
+            m_connected = true;
+            std::printf("[SonyBackend] Connect succeeded on attempt %d\n", attempt);
+            cd_connected = true;
+            break;
           }
-          std::printf("[SonyBackend] CameraDevice::connect() attempt %d/%d failed\n", attempt, max_attempts);
+          std::printf("[SonyBackend] Connect attempt %d/%d failed\n", attempt, max_attempts);
           if (attempt < max_attempts) std::this_thread::sleep_for(std::chrono::seconds(1 << (attempt-1)));
         }
 
         pCam->Release();
         if (cd_connected) {
-          std::printf("[SonyBackend] Connected via CameraDevice wrapper!\n");
+          std::printf("[SonyBackend] Connected via direct CRSDK Connect!\n");
           return true;
         } else {
-          std::printf("[SonyBackend] CameraDevice::connect() failed after %d attempts\n", max_attempts);
+          std::printf("[SonyBackend] Connect failed after %d attempts\n", max_attempts);
           // fallthrough to enumeration
         }
       } else {
-        std::printf("[SonyBackend] CreateCameraObjectInfoEthernetConnection failed (0x%08X) category=%s (%s)\n", (unsigned)err, crerror_category(err), CrErrorString(err).c_str());
+        std::printf("[SonyBackend] CreateCameraObjectInfoEthernetConnection failed (0x%08X) category=%s\n", (unsigned)err, crerror_category(err));
 
         // Try byte-order fallback: some SDKs expect host order for the IP integer
         CrInt32u ipHostOrder = (CrInt32u)ntohl(ina.s_addr);
@@ -241,35 +300,43 @@ bool SonyBackend::connect_first_camera() {
             }
             if (!user || !user[0]) user = nullptr; // match RemoteCli: no username, only password
 
-            // Use CameraDevice wrapper for connect (same behaviour as RemoteCli)
-            m_camera_device.reset(new cli::CameraDevice(0, camInfo));
-            if (pass && pass[0]) m_camera_device->set_user_password(std::string(pass));
-            if (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1') {
-              m_camera_device->set_auto_accept_fingerprint(true);
+            if (!m_callback_impl) m_callback_impl = static_cast<void*>(new DeviceCallbackImpl());
+            auto* cb = static_cast<SCRSDK::IDeviceCallback*>(m_callback_impl);
+            const char* accept_fp_env = std::getenv("SONY_ACCEPT_FINGERPRINT");
+            const char* env_fp = std::getenv("SONY_FINGERPRINT");
+            const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
+            CrInt32u fp_len = 0;
+            const char* fp_ptr = nullptr;
+            if (accept_fp_env && accept_fp_env[0] == '1') {
+              fp_ptr = select_fingerprint(env_fp, env_fp_len, fingerprint, fpSize, &fp_len);
+              if (env_fp && env_fp[0]) {
+                std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_len);
+              } else if (fp_ptr && fp_len > 0) {
+                std::printf("[SonyBackend] Using fingerprint from GetFingerprint (len=%u)\n", (unsigned)fp_len);
+              }
             }
 
             const int max_attempts_host = 5;
             bool cd_connected_host = false;
             for (int attempt = 1; attempt <= max_attempts_host; ++attempt) {
-              if (m_camera_device->connect(SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON)) {
-                m_device_handle = m_camera_device->get_device_handle();
-                if (m_device_handle != 0) {
-                  m_connected = true;
-                  std::printf("[SonyBackend] CameraDevice::connect() succeeded on attempt %d\n", attempt);
-                  cd_connected_host = true;
-                  break;
-                }
+              SCRSDK::CrDeviceHandle h = 0;
+              if (connect_camera(camInfo, cb, user, pass, fp_ptr, fp_len, &h)) {
+                m_device_handle = h;
+                m_connected = true;
+                std::printf("[SonyBackend] Connect succeeded on attempt %d\n", attempt);
+                cd_connected_host = true;
+                break;
               }
-              std::printf("[SonyBackend] CameraDevice::connect() attempt %d/%d failed\n", attempt, max_attempts_host);
+              std::printf("[SonyBackend] Connect attempt %d/%d failed\n", attempt, max_attempts_host);
               if (attempt < max_attempts_host) std::this_thread::sleep_for(std::chrono::seconds(1 << (attempt-1)));
             }
 
             pCam1b->Release();
             if (cd_connected_host) {
-              std::printf("[SonyBackend] Connected via CameraDevice wrapper (host-order IP)!\n");
+              std::printf("[SonyBackend] Connected via direct CRSDK Connect (host-order IP)!\n");
               return true;
             } else {
-              std::printf("[SonyBackend] CameraDevice::connect() (host-order IP) failed after %d attempts\n", max_attempts_host);
+              std::printf("[SonyBackend] Connect (host-order IP) failed after %d attempts\n", max_attempts_host);
               // fallthrough to earlier fallbacks
             }
           } else {
@@ -313,35 +380,45 @@ bool SonyBackend::connect_first_camera() {
           }
           if (!user2 || !user2[0]) user2 = nullptr;
 
-          // Use CameraDevice wrapper for fallback connect
-          m_camera_device.reset(new cli::CameraDevice(0, pCam2));
-          if (pass2 && pass2[0]) m_camera_device->set_user_password(std::string(pass2));
-          if (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1') {
-            m_camera_device->set_auto_accept_fingerprint(true);
+          if (!m_callback_impl) m_callback_impl = static_cast<void*>(new DeviceCallbackImpl());
+          auto* cb = static_cast<SCRSDK::IDeviceCallback*>(m_callback_impl);
+          const char* user2_env = std::getenv("SONY_USER");
+          if (!user2_env || !user2_env[0]) user2_env = nullptr;
+          const char* accept_fp2 = std::getenv("SONY_ACCEPT_FINGERPRINT");
+          const char* env_fp = std::getenv("SONY_FINGERPRINT");
+          const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
+          CrInt32u fp_len2 = 0;
+          const char* fp_ptr2 = nullptr;
+          if (accept_fp2 && accept_fp2[0] == '1') {
+            fp_ptr2 = select_fingerprint(env_fp, env_fp_len, fingerprint2, fpSize2, &fp_len2);
+            if (env_fp && env_fp[0]) {
+              std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_len2);
+            } else if (fp_ptr2 && fp_len2 > 0) {
+              std::printf("[SonyBackend] Using fingerprint from GetFingerprint (len=%u)\n", (unsigned)fp_len2);
+            }
           }
 
           const int max_connect_attempts_ip2 = 3;
           bool cd_connected_fb = false;
           for (int attempt2 = 1; attempt2 <= max_connect_attempts_ip2; ++attempt2) {
-            if (m_camera_device->connect(SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON)) {
-              m_device_handle = m_camera_device->get_device_handle();
-              if (m_device_handle != 0) {
-                m_connected = true;
-                std::printf("[SonyBackend] CameraDevice::connect() (fallback) succeeded on attempt %d\n", attempt2);
-                cd_connected_fb = true;
-                break;
-              }
+            SCRSDK::CrDeviceHandle h = 0;
+            if (connect_camera(pCam2, cb, user2_env, pass2, fp_ptr2, fp_len2, &h)) {
+              m_device_handle = h;
+              m_connected = true;
+              std::printf("[SonyBackend] Connect (fallback) succeeded on attempt %d\n", attempt2);
+              cd_connected_fb = true;
+              break;
             }
-            std::printf("[SonyBackend] CameraDevice::connect() (fallback) attempt %d/%d failed\n", attempt2, max_connect_attempts_ip2);
+            std::printf("[SonyBackend] Connect (fallback) attempt %d/%d failed\n", attempt2, max_connect_attempts_ip2);
             if (attempt2 < max_connect_attempts_ip2) std::this_thread::sleep_for(std::chrono::seconds(1 << (attempt2-1)));
           }
 
           pCam2->Release();
           if (cd_connected_fb) {
-            std::printf("[SonyBackend] Connected via CameraDevice wrapper (fallback)!\n");
+            std::printf("[SonyBackend] Connected via direct CRSDK Connect (fallback)!\n");
             return true;
           } else {
-            std::printf("[SonyBackend] CameraDevice::connect() (fallback) failed after %d attempts\n", max_connect_attempts_ip2);
+            std::printf("[SonyBackend] Connect (fallback) failed after %d attempts\n", max_connect_attempts_ip2);
             // fallthrough to enumeration
           }
         } else {
@@ -377,22 +454,33 @@ bool SonyBackend::connect_first_camera() {
               }
               if (!userC || !userC[0]) userC = nullptr;
 
-              // Try using CameraDevice wrapper for candidate model connect
-              std::unique_ptr<cli::CameraDevice> candDev(new cli::CameraDevice(cand, pCamC));
-              if (passC && passC[0]) candDev->set_user_password(std::string(passC));
-              if (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1') {
-                candDev->set_auto_accept_fingerprint(true);
-              }
-              if (candDev->connect(SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON)) {
-                m_device_handle = candDev->get_device_handle();
-                if (m_device_handle != 0) {
-                  std::printf("[SonyBackend] Candidate model %d Connect succeeded via CameraDevice!\n", cand);
-                  m_connected = true;
-                  pCamC->Release();
-                  return true;
+              if (!m_callback_impl) m_callback_impl = static_cast<void*>(new DeviceCallbackImpl());
+              auto* cb = static_cast<SCRSDK::IDeviceCallback*>(m_callback_impl);
+              const char* userC_env = std::getenv("SONY_USER");
+              if (!userC_env || !userC_env[0]) userC_env = nullptr;
+              const char* accept_fpC = std::getenv("SONY_ACCEPT_FINGERPRINT");
+              const char* env_fp = std::getenv("SONY_FINGERPRINT");
+              const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
+              CrInt32u fp_lenC = 0;
+              const char* fp_ptrC = nullptr;
+              if (accept_fpC && accept_fpC[0] == '1') {
+                fp_ptrC = select_fingerprint(env_fp, env_fp_len, fingerprintC, fpSizeC, &fp_lenC);
+                if (env_fp && env_fp[0]) {
+                  std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_lenC);
+                } else if (fp_ptrC && fp_lenC > 0) {
+                  std::printf("[SonyBackend] Using fingerprint from GetFingerprint (len=%u)\n", (unsigned)fp_lenC);
                 }
               }
-              std::printf("[SonyBackend] Candidate model %d Connect failed via CameraDevice\n", cand);
+
+              SCRSDK::CrDeviceHandle h = 0;
+              if (connect_camera(pCamC, cb, userC_env, passC, fp_ptrC, fp_lenC, &h)) {
+                m_device_handle = h;
+                std::printf("[SonyBackend] Candidate model %d Connect succeeded via direct CRSDK Connect!\n", cand);
+                m_connected = true;
+                pCamC->Release();
+                return true;
+              }
+              std::printf("[SonyBackend] Candidate model %d Connect failed via direct CRSDK Connect\n", cand);
 
               pCamC->Release();
             } else {
@@ -424,7 +512,7 @@ bool SonyBackend::connect_first_camera() {
                 pCam_no_ssh->Release();
                 return true;
               } else {
-                std::printf("[SonyBackend] Non-SSH Connect failed (0x%08X) category=%s (%s)\n", (unsigned)st_no_ssh, crerror_category(st_no_ssh), CrErrorString(st_no_ssh).c_str());
+                std::printf("[SonyBackend] Non-SSH Connect failed (0x%08X) category=%s\n", (unsigned)st_no_ssh, crerror_category(st_no_ssh));
               }
               pCam_no_ssh->Release();
             } else {
@@ -447,7 +535,7 @@ bool SonyBackend::connect_first_camera() {
     // Match RemoteCli exactly: no timeout parameter
     st = SCRSDK::EnumCameraObjects(&enumInfo);
     if (!CR_FAILED(st) && enumInfo) break;
-    std::printf("[SonyBackend] EnumCameraObjects failed (0x%08X) attempt %d/%d -- %s\n", (unsigned)st, attempt, max_attempts, CrErrorString(st).c_str());
+    std::printf("[SonyBackend] EnumCameraObjects failed (0x%08X) attempt %d/%d\n", (unsigned)st, attempt, max_attempts);
     if (attempt < max_attempts) {
       // show local interfaces to aid debugging
       system("ip -brief addr 2>/dev/null || ip addr 2>/dev/null || echo 'ip command not available'");
@@ -534,16 +622,15 @@ bool SonyBackend::connect_first_camera() {
   CrInt32u fpSize = (CrInt32u)sizeof(fingerprint); // NOTE: NOT SCRSDK::CrInt32u
   SCRSDK::CrError fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
 
+  std::string fp_norm;
   if (CR_FAILED(fpSt) || fpSize == 0) {
     std::printf("[SonyBackend] GetFingerprint failed (0x%08X)\n", (unsigned)fpSt);
     fpSize = 0; // still attempt connect
   } else {
-    // Ensure null termination for printing
-    if (fpSize < sizeof(fingerprint)) fingerprint[fpSize] = '\0';
-    fingerprint[sizeof(fingerprint) - 1] = '\0';
+    fp_norm = normalize_fingerprint(fingerprint, fpSize);
 
-    std::printf("[SonyBackend] Fingerprint OK (size=%u)\n", (unsigned)fpSize);
-    std::printf("[SonyBackend] fingerprint:\n%s\n", fingerprint);
+    std::printf("[SonyBackend] Fingerprint OK (size=%u padded=%u)\n", (unsigned)fpSize, (unsigned)fp_norm.size());
+    std::printf("[SonyBackend] fingerprint (padded):\n%s\n", fp_norm.c_str());
 
     const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
     if (!(accept_fp && accept_fp[0] && accept_fp[0] == '1')) {
@@ -565,30 +652,37 @@ bool SonyBackend::connect_first_camera() {
   }
   if (!user || !user[0]) user = nullptr;
 
-  // 5) Connect (Remote Control Mode) with retries + backoff using CameraDevice wrapper
-  std::printf("[SonyBackend] Connect (Remote Control Mode) via CameraDevice...\n");
+  // 5) Connect (Remote Control Mode) with retries + backoff using direct CRSDK Connect
+  std::printf("[SonyBackend] Connect (Remote Control Mode) via direct CRSDK Connect...\n");
 
-  // Create or replace CameraDevice instance for the selected camera
-  m_camera_device.reset(new cli::CameraDevice(selectedIndex + 1, camInfo));
-  if (pass && pass[0]) m_camera_device->set_user_password(std::string(pass));
-  if (std::getenv("SONY_ACCEPT_FINGERPRINT") && std::getenv("SONY_ACCEPT_FINGERPRINT")[0] == '1') {
-    m_camera_device->set_auto_accept_fingerprint(true);
+  if (!m_callback_impl) m_callback_impl = static_cast<void*>(new DeviceCallbackImpl());
+  auto* cb = static_cast<SCRSDK::IDeviceCallback*>(m_callback_impl);
+  const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
+  const char* env_fp = std::getenv("SONY_FINGERPRINT");
+  const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
+  CrInt32u fp_len = 0;
+  const char* fp_ptr = nullptr;
+  if (accept_fp && accept_fp[0] == '1') {
+    fp_ptr = select_fingerprint(env_fp, env_fp_len, fingerprint, fpSize, &fp_len);
+    if (env_fp && env_fp[0]) {
+      std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_len);
+    } else if (fp_ptr && fp_len > 0) {
+      std::printf("[SonyBackend] Using fingerprint from GetFingerprint (len=%u)\n", (unsigned)fp_len);
+    }
   }
 
   const int max_connect_attempts = 5;
   bool cd_connected = false;
   for (int attempt = 1; attempt <= max_connect_attempts; ++attempt) {
-    if (m_camera_device->connect(SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON)) {
-      auto h = m_camera_device->get_device_handle();
-      if (h != 0) {
-        m_device_handle = h;
-        m_connected = true;
-        std::printf("[SonyBackend] CameraDevice::connect() succeeded on attempt %d\n", attempt);
-        cd_connected = true;
-        break;
-      }
+    SCRSDK::CrDeviceHandle h = 0;
+    if (connect_camera(camInfo, cb, user, pass, fp_ptr, fp_len, &h)) {
+      m_device_handle = h;
+      m_connected = true;
+      std::printf("[SonyBackend] Connect succeeded on attempt %d\n", attempt);
+      cd_connected = true;
+      break;
     }
-    std::printf("[SonyBackend] CameraDevice::connect() attempt %d/%d failed\n", attempt, max_connect_attempts);
+    std::printf("[SonyBackend] Connect attempt %d/%d failed\n", attempt, max_connect_attempts);
     if (attempt < max_connect_attempts) std::this_thread::sleep_for(std::chrono::seconds(1 << (attempt - 1)));
   }
 
@@ -609,32 +703,51 @@ bool SonyBackend::set_runstop(bool run) {
     return false;
   }
 
-  // Same mapping the sample uses: Up/Down
-  const SCRSDK::CrCommandParam param = run
-      ? SCRSDK::CrCommandParam::CrCommandParam_Up
-      : SCRSDK::CrCommandParam::CrCommandParam_Down;
+  const SCRSDK::CrCommandParam start_param = SCRSDK::CrCommandParam::CrCommandParam_Down;
+  const SCRSDK::CrCommandParam stop_param = SCRSDK::CrCommandParam::CrCommandParam_Up;
+  const SCRSDK::CrCommandParam movie_param = run ? start_param : stop_param;
 
-  // Try toggle, then fall back to MovieRecord
+  auto send_toggle = [&](SCRSDK::CrCommandId cmd_id) {
+    auto st_down = SCRSDK::SendCommand(m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Down);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    auto st_up = SCRSDK::SendCommand(m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Up);
+    std::printf("[SonyBackend] set_runstop(%d): %s down=0x%08X up=0x%08X\n",
+                run ? 1 : 0,
+                (cmd_id == SCRSDK::CrCommandId::CrCommandId_MovieRecButtonToggle) ? "Toggle" : "Toggle2",
+                (unsigned)st_down,
+                (unsigned)st_up);
+    return std::pair<SCRSDK::CrError, SCRSDK::CrError>(st_down, st_up);
+  };
+
+  auto toggle_result = send_toggle(SCRSDK::CrCommandId::CrCommandId_MovieRecButtonToggle);
+  if (CR_SUCCEEDED(toggle_result.first) || CR_SUCCEEDED(toggle_result.second)) {
+    std::printf("[SonyBackend] set_runstop(%d): OK (toggle)\n", run ? 1 : 0);
+    return true;
+  }
+
   auto st = SCRSDK::SendCommand(
       m_device_handle,
-      SCRSDK::CrCommandId::CrCommandId_MovieRecButtonToggle,
-      (SCRSDK::CrCommandParam)param);
-
-  if (CR_FAILED(st)) {
-    st = SCRSDK::SendCommand(
-        m_device_handle,
-        SCRSDK::CrCommandId::CrCommandId_MovieRecord,
-        (SCRSDK::CrCommandParam)param);
+      SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+      movie_param);
+  if (CR_SUCCEEDED(st)) {
+    std::printf("[SonyBackend] set_runstop(%d): OK (movie)\n", run ? 1 : 0);
+    return true;
   }
 
-  if (CR_FAILED(st)) {
-    std::printf("[SonyBackend] set_runstop(%d): SendCommand FAILED (0x%08X)\n",
-                run ? 1 : 0, (unsigned)st);
-    return false;
+  const char* allow_invalid = std::getenv("SONY_ALLOW_INVALID_CALLED");
+  if (allow_invalid && allow_invalid[0] == '1' &&
+      toggle_result.first == 0x8402 && toggle_result.second == 0x8402) {
+    std::printf("[SonyBackend] set_runstop(%d): treating 0x8402 as success (SONY_ALLOW_INVALID_CALLED=1)\n",
+                run ? 1 : 0);
+    return true;
   }
 
-  std::printf("[SonyBackend] set_runstop(%d): OK\n", run ? 1 : 0);
-  return true;
+  std::printf("[SonyBackend] set_runstop(%d): SendCommand FAILED (toggle=0x%08X/0x%08X movie=0x%08X)\n",
+              run ? 1 : 0,
+              (unsigned)toggle_result.first,
+              (unsigned)toggle_result.second,
+              (unsigned)st);
+  return false;
 }
 
 } // namespace ccu

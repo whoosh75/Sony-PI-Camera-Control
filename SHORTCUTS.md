@@ -34,3 +34,10 @@ Important: fingerprint acceptance & connect behavior
   Example: SONY_PASS="Password1" SONY_ACCEPT_FINGERPRINT=1 SONY_CAMERA_IP="192.168.33.94" ./start_ccu.sh
 
 - The daemon will retry Connect up to 5 times with exponential backoff and it will log connection error categories to help debugging.
+
+Important: MPC-2610 record start/stop
+- MPC-2610 uses a Down -> Up toggle to start/stop recording.
+- Record start can return 0x8402 even when the camera starts recording.
+- To treat 0x8402 as success in the daemon, set:
+
+  SONY_ALLOW_INVALID_CALLED=1

@@ -47,9 +47,9 @@ public:
     bool initialize() {
         std::cout << "🚀 Initializing Sony SDK (like RemoteCli)..." << std::endl;
         
-        auto result = SCRSDK::Init();
-        if (result != SCRSDK::CrError_None) {
-            std::cout << "❌ SDK initialization failed: " << static_cast<int>(result) << std::endl;
+        const bool init_ok = SCRSDK::Init();
+        if (!init_ok) {
+            std::cout << "❌ SDK initialization failed (Init returned false)." << std::endl;
             return false;
         }
         

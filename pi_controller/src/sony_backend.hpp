@@ -4,8 +4,6 @@
 
 // CRSDK
 #include "CRSDK/CameraRemote_SDK.h"
-#include "sony_sample/CameraDevice.h"
-#include <memory>
 
 namespace ccu {
 
@@ -30,8 +28,6 @@ private:
   // Opaque pointer to concrete callback implementation (managed in .cpp)
   void* m_callback_impl = nullptr;
 
-  // When reusing Sony sample's CameraDevice, hold an instance here
-  std::unique_ptr<cli::CameraDevice> m_camera_device;
 };
 
 } // namespace ccu

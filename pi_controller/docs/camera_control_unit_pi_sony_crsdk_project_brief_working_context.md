@@ -59,8 +59,9 @@ camera-control/
 │   │   └── protocol.cpp          # Packet definitions
 │   └── build/                    # out-of-tree build (ignored)
 │
-├── documents/
-│   └── project_brief.md          # (this document)
+├── pi_controller/
+│   └── docs/
+│       └── camera_control_unit_pi_sony_crsdk_project_brief_working_context.md
 │
 └── README.md
 ```
@@ -118,29 +119,24 @@ LD_LIBRARY_PATH="/home/whoosh/CrSDK_v2.00.00_20251030a_Linux64ARMv8/build:
 
 ### Working
 
-- CRSDK initialization
-- Camera enumeration (`EnumCameraObjects`)
-- Fingerprint retrieval (`GetFingerprint`)
-- Non-interactive connect attempt
+- CRSDK init + direct Ethernet camera object creation (IP + MAC)
+- Fingerprint retrieval and padded Base64 handling
+- Authenticated connect with password and fingerprint
+- Record start/stop on MPC-2610 using MovieRecButtonToggle (Down -> Up)
+- Retry/backoff for record start until camera is ready
 - UDP server and protocol plumbing
 
-### Known Issues
+### Known Limits (MPC-2610 / Burano)
 
-1. **Connect() sometimes fails (0x00008006)**
-   - RemoteCli succeeds using identical fingerprint
-   - Indicates subtle mismatch with:
-     - control mode
-     - callback class signature
-     - password handling
+1. **Some properties are not exposed**
+  - `CrDeviceProperty_MovieRecButtonToggleEnableStatus` not present
+  - `CrDeviceProperty_RecordingState` not present
+  - `CrDeviceProperty_IsoSensitivity` not present
+  - `CrDeviceProperty_Movie_Recording_FrameRateSetting` may not be exposed
 
-2. **IDeviceCallback signatures vary by SDK**
-   - Methods must match *exactly* the CRSDK headers
-   - Incorrect overrides cause silent runtime failure
-
-3. **EnumCameraObjects intermittently fails (0x00008703)**
-   - Often caused by:
-     - camera already connected elsewhere
-     - wrong network interface selection
+2. **Record start returns `0x8402` even when it works**
+  - Camera starts recording despite `CrError_Api_InvalidCalled`
+  - The daemon can treat `0x8402` as success when enabled
 
 ---
 
@@ -157,24 +153,19 @@ LD_LIBRARY_PATH="/home/whoosh/CrSDK_v2.00.00_20251030a_Linux64ARMv8/build:
 
 ### Critical
 
-1. **Make SonyBackend connect path byte-for-byte equivalent to CameraDevice.cpp**
-   - Match `SDK::Connect()` argument order
-   - Match control mode (`Remote` vs `RemoteTransfer`)
-   - Ensure callback derives from correct CRSDK interface
+1. **Make run/stop resilient for MPC-2610**
+  - Keep Down -> Up toggle sequence
+  - Keep retries on start
+  - Optional soft-success for `0x8402`
 
-2. **Stabilise EnumCameraObjects**
-   - Add retry + backoff
-   - Log network interface selection
-
-3. **Confirm callback inheritance**
-   - `class SonyBackend : public SCRSDK::IDeviceCallback`
-   - Remove overrides not present in current SDK
+2. **Confirm property support per camera**
+  - ISO/WB/FPS may be model-specific
+  - Use property list to decide supported controls
 
 ### Functional
 
-4. Implement camera status polling
-5. Implement explicit connect / disconnect state machine
-6. Extend protocol beyond RUN/STOP
+3. Implement camera status polling (if supported)
+4. Extend protocol beyond RUN/STOP
 
 ---
 

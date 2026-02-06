@@ -39,7 +39,7 @@ struct CameraStatus {
 class CameraController {
 private:
     SCRSDK::ICrCameraObjectInfo* camera_info;
-    CrInt32u device_handle;
+    SCRSDK::CrDeviceHandle device_handle;
     bool is_connected;
     std::string camera_name;
 
@@ -79,7 +79,7 @@ public:
 private:
     std::string last_error;
     bool sendCameraCommand(CrInt32u command, CrInt32u param = 0);
-    bool setCameraProperty(CrInt32u property, const void* value, CrInt32u size);
+    bool setCameraProperty(CrInt32u property, const void* value, CrInt32u size, SCRSDK::CrDataType type);
     bool getCameraProperty(CrInt32u property, void* value, CrInt32u* size);
     
     // Sony CRSDK property mappings

@@ -80,11 +80,12 @@ target_compile_options(movie_record_test PRIVATE -fsigned-char)
 target_compile_options(a74_usb_record_test PRIVATE -fsigned-char)
 target_compile_options(minimal_test PRIVATE -fsigned-char)
 target_compile_options(simple_sdk_test PRIVATE -fsigned-char)
+target_compile_options(simple_recording_test PRIVATE -fsigned-char)
 target_compile_options(remotecli_test PRIVATE -fsigned-char)
 target_compile_options(working_sdk_test PRIVATE -fsigned-char)
 target_compile_options(sony_a74_direct_api PRIVATE -fsigned-char)
 
-target_link_libraries(ccu_daemon PRIVATE pthread dl sony_sample)
+target_link_libraries(ccu_daemon PRIVATE pthread dl)
 
 # ---- Link Sony CRSDK (exact paths from your install) ----
 if (CRSDK_ROOT)
@@ -248,6 +249,14 @@ target_include_directories(ccu_daemon PRIVATE
   )
 
   target_link_directories(working_sdk_test PRIVATE
+    ${CRSDK_ROOT}/build
+  )
+
+  target_link_directories(simple_recording_test PRIVATE
+    ${CRSDK_ROOT}/build
+  )
+
+  target_link_directories(direct_sony_api PRIVATE
     ${CRSDK_ROOT}/build
   )
 

@@ -11,10 +11,10 @@ int main() {
     
     // Initialize SDK exactly like working_sdk_test.cpp
     std::cout << "🚀 Initialize Remote SDK..." << std::endl;
-    auto init_result = SCRSDK::Init();
+    const bool init_ok = SCRSDK::Init();
     
-    if (init_result != SCRSDK::CrError_None) {
-        std::cout << "❌ Failed to initialize SDK with error: " << static_cast<int>(init_result) << std::endl;
+    if (!init_ok) {
+        std::cout << "❌ Failed to initialize SDK (Init returned false)." << std::endl;
         return -1;
     }
     
@@ -35,9 +35,9 @@ int main() {
     std::cout << "📷 Found " << num_cameras << " camera(s)" << std::endl;
     
     // Find Sony A74 (ILCE-7M4)
-    SCRSDK::ICrCameraObjectInfo* sony_a74 = nullptr;
+    const SCRSDK::ICrCameraObjectInfo* sony_a74 = nullptr;
     for (int i = 0; i < num_cameras; ++i) {
-        auto camera_info = camera_list->GetCameraObjectInfo(i);
+        const auto camera_info = camera_list->GetCameraObjectInfo(i);
         if (camera_info) {
             std::string model = camera_info->GetModel();
             std::cout << "[" << (i+1) << "] " << model << std::endl;
@@ -58,7 +58,7 @@ int main() {
     // Connect to Sony A74 (simple version without callback)
     std::cout << "🔗 Connecting to Sony A74..." << std::endl;
     SCRSDK::CrDeviceHandle device_handle = 0;
-    auto connect_result = SCRSDK::Connect(sony_a74, nullptr, &device_handle);
+    auto connect_result = SCRSDK::Connect(const_cast<SCRSDK::ICrCameraObjectInfo*>(sony_a74), nullptr, &device_handle);
     
     if (connect_result != SCRSDK::CrError_None) {
         std::cout << "❌ Failed to connect: " << static_cast<int>(connect_result) << std::endl;

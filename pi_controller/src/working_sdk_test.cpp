@@ -8,10 +8,10 @@ int main() {
     
     // Initialize SDK exactly like RemoteCli
     std::cout << "Initialize Remote SDK..." << std::endl;
-    auto init_result = SCRSDK::Init();
+    const bool init_ok = SCRSDK::Init();
     
-    if (init_result != SCRSDK::CrError_None) {
-        std::cout << "Failed to initialize SDK with error: " << static_cast<int>(init_result) << std::endl;
+    if (!init_ok) {
+        std::cout << "Failed to initialize SDK (Init returned false)." << std::endl;
         return -1;
     }
     
