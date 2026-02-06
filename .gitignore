@@ -50,6 +50,9 @@ __pycache__/
 # Documentation build
 /docs/_build/
 
+# Sony API Reference documentation
+/Sony API Reference html/
+
 # Local test artifacts
 /tmp_*
 *.expect

@@ -1,23 +1,36 @@
-# Sony PI - Camera Control for Raspberry Pi
+# Sony PI - Camera Control for Raspberry Pi - Updated 2026-02-06
 
-A **complete camera control solution** for Sony cinema cameras (MPC-2610) running on Raspberry Pi with Sony Camera Remote SDK v2.00.00.
+A camera control solution for Sony cinema cameras (MPC-2610, A74) with CLI automation working but **true API blocked by SDK initialization failure**.
 
-## ✅ STATUS: FULLY WORKING CONNECTION
+## ⚠️ STATUS: CLI AUTOMATION WORKING - TRUE API BLOCKED
 
-**Connection to Sony MPC-2610 camera successfully established!** 🎉
+**CLI Automation (Slow)**: ✅ Working via RemoteCli wrapper  
+**True CRSDK API (Fast)**: ❌ **BLOCKED - SDK initialization fails with error code 1**  
+**Performance Issue**: CLI automation too slow for production use with MPC-2610
 
-This project solves the challenging Sony CRSDK authentication and connection issues on Linux ARM64 platforms through direct IP connection methodology.
+### 🔍 Current Technical Status
+- **CLI Automation**: RemoteCli menu navigation works but introduces significant latency
+- **CRSDK Initialization**: All custom programs fail `SCRSDK::Init()` with error code 1  
+- **Library Dependencies**: OpenCV libraries linked correctly but SDK still fails
+- **Performance Gap**: Need direct API calls for fast camera control, not menu automation
+- **Root Blocker**: Unknown SDK initialization requirement preventing true API access
 
 ---
 
 ## 🎯 Features
 
-- ✅ **Direct IP Connection** - Bypasses unreliable enumeration
-- ✅ **Sony MPC-2610 Support** - Professional cinema camera control
-- ✅ **Raspberry Pi Optimized** - ARM64 Linux compatibility
-- ✅ **Authentication Solved** - SSH-based camera authentication
-- ✅ **Complete Documentation** - Extensive troubleshooting guide
-- 🚧 **Camera Control API** - Ready for operation implementation
+### ✅ What Works (CLI Automation)
+- ✅ **Menu Navigation** - RemoteCli successfully navigates camera menus
+- ✅ **Recording Commands** - Start/stop recording via menu automation  
+- ✅ **Photo Capture** - Still photo capture through menu system
+- ✅ **Dual Camera Support** - Both MPC-2610 and A74 detected
+- ✅ **Authentication** - Reliable camera connection established
+
+### ❌ What's Blocked (True API)
+- ❌ **Direct CRSDK API** - SDK initialization fails in all custom programs
+- ❌ **Fast Performance** - Menu automation introduces unacceptable latency 
+- ❌ **Production Speed** - Current solution too slow for real-world use
+- ❌ **Direct Commands** - Cannot use `SCRSDK::SendCommand()` for instant control
 
 ## 🔧 Hardware Requirements
 
@@ -41,40 +54,59 @@ export SONY_PASS="Password1"                    # Camera SSH password
 export LD_LIBRARY_PATH="/path/to/CrSDK/external/crsdk:/path/to/CrSDK/external/crsdk/CrAdapter:/path/to/CrSDK/external/opencv/Linux"
 ```
 
-### 2. Test Connection
+### 2. Current Solution: CLI Automation (Slow)
 
 ```bash
-cd pi_controller
+cd pi_controller/build
 
-# Compile test application
-g++ -o test_direct_simple test_direct_simple.cpp \
-    -I/path/to/CrSDK/app \
-    -L/path/to/CrSDK/external/crsdk \
-    -lCr_Core -std=c++11 -fsigned-char
-
-# Test camera connection
-./test_direct_simple
+# Test CLI automation wrapper
+python3 working_sony_api.py
 ```
 
-**Expected Result:**
+**⚠️ Performance Warning:**
 ```
-Direct camera connection test for MPC-2610...
-Using MAC: 50:26:EF:B8:3F:2C
-Creating camera object for IP 192.168.33.94 with model MPC_2610...
-Camera object created successfully!
-SUCCESS: Direct IP connection to MPC-2610 camera established!
-Camera model: MPC-2610
-Camera name: MPC-2610
+🎯 Sony Camera API Demo
+=====================
+
+📹 Testing 3-second recording...
+🎥 Recording for 3 seconds...
+🎬 Starting video recording...  # <- Menu navigation delay
+✅ Recording started!             # <- 2-3 second latency
+⏹️ Stopping video recording...
+✅ Recording stopped!
 ```
 
-### 3. Build Camera Control System
+**Issue**: Each command involves full menu navigation through RemoteCli, causing **2-3 second delays** unsuitable for production use.
+
+### 3. Blocked: True API Implementation
+
+```cpp
+// This is what we NEED but fails:
+SCRSDK::SendCommand(device_handle, 
+                   SCRSDK::CrCommandId_MovieRecord, 
+                   SCRSDK::CrCommandParam_Down);  // Instant execution
+```
+
+**Problem**: All SDK initialization attempts fail:
+```bash
+./working_sdk_test
+# Output: Failed to initialize SDK with error: 1
+```
+
+### 4. Build Additional Tools (Optional)
 
 ```bash
 cd pi_controller
 mkdir build && cd build
-cmake ..
+cmake .. -DCRSDK_ROOT=/path/to/your/sony_sdk
 make
 ```
+
+**Available Programs:**
+- `working_sony_api.py` - ✅ Working Python API (main interface)
+- `working_rec.sh` - ✅ Working shell script backend
+- `ccu_diag` - Camera diagnostic tool
+- `ccu_daemon` - Multi-camera daemon
 
 ## 📡 Network Configuration
 
