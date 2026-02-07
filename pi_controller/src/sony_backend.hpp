@@ -28,6 +28,25 @@ public:
 
   bool get_property_options(CrInt32u property_code, PropertyOptions& out);
 
+  struct Status {
+    uint32_t battery_level = 0xFFFFFFFFu;
+    uint32_t battery_remain = 0xFFFFFFFFu;
+    uint32_t battery_remain_unit = 0xFFFFFFFFu;
+    uint32_t recording_media = 0xFFFFFFFFu;
+    uint32_t movie_recording_media = 0xFFFFFFFFu;
+    uint32_t media_slot1_status = 0xFFFFFFFFu;
+    uint32_t media_slot1_remaining_number = 0xFFFFFFFFu;
+    uint32_t media_slot1_remaining_time = 0xFFFFFFFFu;
+    uint32_t media_slot2_status = 0xFFFFFFFFu;
+    uint32_t media_slot2_remaining_number = 0xFFFFFFFFu;
+    uint32_t media_slot2_remaining_time = 0xFFFFFFFFu;
+  };
+
+  bool get_status(Status& out);
+
+  // Stills capture
+  bool capture_still(bool with_af);
+
   bool is_connected() const { return m_connected && (m_device_handle != 0); }
 
 private:

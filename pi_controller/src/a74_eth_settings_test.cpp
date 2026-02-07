@@ -143,84 +143,130 @@ static std::vector<CrInt64u> parse_values(const CrDeviceProperty& prop) {
     return out;
 }
 
-static bool choose_and_set_property(CrDeviceHandle handle,
-                                    CrInt32u code,
-                                    const char* label,
-                                    bool has_desired,
-                                    CrInt64u desired_value) {
+static bool get_property_info(CrDeviceHandle handle,
+                              CrInt32u code,
+                              CrDataType& out_type,
+                              CrInt64u& out_current) {
     CrDeviceProperty* props = nullptr;
     CrInt32 num_props = 0;
-    CrInt32u code_copy = code;
-    auto err = SCRSDK::GetSelectDeviceProperties(handle, 1, &code_copy, &props, &num_props);
+    auto err = SCRSDK::GetDeviceProperties(handle, &props, &num_props);
     if (CR_FAILED(err) || !props || num_props <= 0) {
-        std::cout << "❌ " << label << ": GetSelectDeviceProperties failed 0x" << std::hex << err << std::dec << std::endl;
+        std::cout << "❌ GetDeviceProperties failed 0x" << std::hex << err << std::dec
+                  << " num_props=" << num_props << std::endl;
         if (props) SCRSDK::ReleaseDeviceProperties(handle, props);
         return false;
     }
 
-    const CrDeviceProperty& prop = props[0];
-    const CrDataType type = prop.GetValueType();
-    const CrInt64u current = prop.GetCurrentValue();
-
-    std::cout << "🔎 " << label << " current=0x" << std::hex << current << std::dec
-              << " type=0x" << std::hex << type << std::dec << std::endl;
-
-    const bool is_range = (type & CrDataType_RangeBit) != 0;
-    CrInt64u chosen = current;
-
-    if (is_range) {
-        auto vals = parse_values(prop);
-        if (vals.size() >= 2) {
-            CrInt64u minv = vals[0];
-            CrInt64u maxv = vals[1];
-            if (has_desired && desired_value >= minv && desired_value <= maxv) {
-                chosen = desired_value;
-            } else if (current != minv) {
-                chosen = minv;
+    bool found = false;
+    for (CrInt32 i = 0; i < num_props; ++i) {
+        if (props[i].GetCode() == code) {
+            found = true;
+            out_type = props[i].GetValueType();
+            auto values = parse_values(props[i]);
+            if (!values.empty()) {
+                out_current = values[0];
             } else {
-                chosen = maxv;
+                out_current = props[i].GetCurrentValue();
             }
-            std::cout << "📐 " << label << " range min=0x" << std::hex << minv
-                      << " max=0x" << maxv << std::dec << std::endl;
-        }
-    } else {
-        auto vals = parse_values(prop);
-        if (!vals.empty()) {
-            bool found_desired = false;
-            for (auto v : vals) {
-                if (has_desired && v == desired_value) {
-                    chosen = v;
-                    found_desired = true;
-                    break;
-                }
-            }
-            if (!found_desired) {
-                for (auto v : vals) {
-                    if (v != current) { chosen = v; break; }
-                }
-            }
-            std::cout << "📋 " << label << " options=" << vals.size() << std::endl;
-        } else if (has_desired) {
-            chosen = desired_value;
+            break;
         }
     }
 
-    if (!prop.IsSetEnableCurrentValue()) {
-        std::cout << "❌ " << label << " is read-only on this camera" << std::endl;
-        SCRSDK::ReleaseDeviceProperties(handle, props);
-        return false;
-    }
+    SCRSDK::ReleaseDeviceProperties(handle, props);
+    return found;
+}
 
+static bool set_property_value(CrDeviceHandle handle,
+                               CrInt32u code,
+                               CrDataType type,
+                               CrInt64u value) {
     SCRSDK::CrDeviceProperty setprop;
     setprop.SetCode(code);
     setprop.SetValueType(type);
-    setprop.SetCurrentValue(chosen);
+    setprop.SetCurrentValue(value);
+    auto err = SCRSDK::SetDeviceProperty(handle, &setprop);
+    if (CR_FAILED(err)) {
+        std::cout << "❌ SetDeviceProperty failed 0x" << std::hex << err << std::dec << std::endl;
+        return false;
+    }
+    return true;
+}
 
-    auto set_err = SCRSDK::SetDeviceProperty(handle, &setprop);
+static bool set_property_direct(CrDeviceHandle handle,
+                                CrInt32u code,
+                                CrDataType type,
+                                CrInt64u value,
+                                const char* label) {
+    std::cout << "🎯 " << label << " set request value=0x" << std::hex << value << std::dec
+              << " type=0x" << std::hex << type << std::dec << std::endl;
+    if (!set_property_value(handle, code, type, value)) {
+        std::cout << "❌ " << label << " set failed" << std::endl;
+        return false;
+    }
+    std::cout << "✅ " << label << " set OK" << std::endl;
+    return true;
+}
+
+static void print_status_properties(CrDeviceHandle handle, const char* label) {
+    SCRSDK::CrDeviceProperty* props = nullptr;
+    CrInt32 num_props = 0;
+    auto err = SCRSDK::GetDeviceProperties(handle, &props, &num_props);
+    if (CR_FAILED(err) || !props || num_props <= 0) {
+        std::cout << "❌ " << label << ": GetDeviceProperties failed 0x" << std::hex << err << std::dec
+                  << " num_props=" << num_props << std::endl;
+        if (props) SCRSDK::ReleaseDeviceProperties(handle, props);
+        return;
+    }
+
+    auto print_code = [&](CrInt32u code, const char* name) {
+        for (CrInt32 i = 0; i < num_props; ++i) {
+            if (props[i].GetCode() == code) {
+                auto values = parse_values(props[i]);
+                if (!values.empty()) {
+                    std::cout << "✅ " << name << " = 0x" << std::hex << values[0] << std::dec << std::endl;
+                } else {
+                    std::cout << "✅ " << name << " (present, no value data)" << std::endl;
+                }
+                return;
+            }
+        }
+        std::cout << "⚠️  " << name << " not found" << std::endl;
+    };
+
+    std::cout << "🔋 Battery/Media status" << std::endl;
+    print_code(CrDeviceProperty_BatteryLevel, "BatteryLevel");
+    print_code(CrDeviceProperty_BatteryRemain, "BatteryRemain");
+    print_code(CrDeviceProperty_BatteryRemainDisplayUnit, "BatteryRemainDisplayUnit");
+    print_code(CrDeviceProperty_RecordingMedia, "RecordingMedia");
+    print_code(CrDeviceProperty_Movie_RecordingMedia, "Movie_RecordingMedia");
+    print_code(CrDeviceProperty_MediaSLOT1_Status, "MediaSLOT1_Status");
+    print_code(CrDeviceProperty_MediaSLOT1_RemainingNumber, "MediaSLOT1_RemainingNumber");
+    print_code(CrDeviceProperty_MediaSLOT1_RemainingTime, "MediaSLOT1_RemainingTime");
+    print_code(CrDeviceProperty_MediaSLOT2_Status, "MediaSLOT2_Status");
+    print_code(CrDeviceProperty_MediaSLOT2_RemainingNumber, "MediaSLOT2_RemainingNumber");
+    print_code(CrDeviceProperty_MediaSLOT2_RemainingTime, "MediaSLOT2_RemainingTime");
+
     SCRSDK::ReleaseDeviceProperties(handle, props);
+}
 
-    if (CR_FAILED(set_err)) {
-        std::cout << "❌ " << label << " set failed 0x" << std::hex << set_err << std::dec << std::endl;
+static bool set_property_with_current_type(CrDeviceHandle handle,
+                                           CrInt32u code,
+                                           const char* label,
+                                           bool has_desired,
+                                           CrInt64u desired_value) {
+    CrDataType type = CrDataType_UInt8;
+    CrInt64u current = 0;
+    if (!get_property_info(handle, code, type, current)) {
+        std::cout << "❌ " << label << ": property not found via GetDeviceProperties" << std::endl;
+        return false;
+    }
+
+    const CrInt64u chosen = has_desired ? desired_value : current;
+    std::cout << "🔎 " << label << " current=0x" << std::hex << current << std::dec
+              << " type=0x" << std::hex << type << std::dec << std::endl;
+
+    if (!set_property_value(handle, code, type, chosen)) {
+        std::cout << "❌ " << label << " set failed" << std::endl;
         return false;
     }
 
@@ -255,13 +301,29 @@ int main() {
     CrInt8u macBuf[6] = {0};
     parse_mac_from_env_or_arp(ip_env, macBuf);
 
+    const char* ssh_env = std::getenv("SONY_SSH_SUPPORT");
+    CrInt32u ssh_support = 1;
+    if (ssh_env && ssh_env[0]) {
+        ssh_support = (std::atoi(ssh_env) != 0) ? 1u : 0u;
+    }
+
+    SCRSDK::CrCameraDeviceModelList model = SCRSDK::CrCameraDeviceModelList::CrCameraDeviceModel_ILCE_7M4;
+    const char* model_env = std::getenv("SONY_CAMERA_MODEL");
+    if (model_env && model_env[0]) {
+        unsigned long model_val = std::strtoul(model_env, nullptr, 0);
+        model = static_cast<SCRSDK::CrCameraDeviceModelList>(model_val);
+    }
+
+    std::cout << "🔧 CreateCameraObjectInfoEthernetConnection model=" << (unsigned)model
+              << " ip=" << ip_env << " ipNum=" << ipAddr << " ssh=" << (unsigned)ssh_support << std::endl;
+
     ICrCameraObjectInfo* camInfo = nullptr;
     auto err = SCRSDK::CreateCameraObjectInfoEthernetConnection(
         &camInfo,
-        SCRSDK::CrCameraDeviceModelList::CrCameraDeviceModel_ILCE_7M4,
+        model,
         ipAddr,
         macBuf,
-        1);
+        ssh_support);
 
     if (CR_FAILED(err) || !camInfo) {
         std::cout << "❌ CreateCameraObjectInfoEthernetConnection failed 0x" << std::hex << err << std::dec << std::endl;
@@ -269,12 +331,23 @@ int main() {
         return -1;
     }
 
+    std::cout << "✅ Camera object created" << std::endl;
+
     char fingerprint[4096] = {0};
-    CrInt32u fpSize = (CrInt32u)sizeof(fingerprint);
-    auto fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
-    if (CR_FAILED(fpSt) || fpSize == 0) {
-        std::cout << "⚠️  GetFingerprint failed 0x" << std::hex << fpSt << std::dec << std::endl;
-        fpSize = 0;
+    CrInt32u fpSize = 0;
+    const char* env_fp = std::getenv("SONY_FINGERPRINT");
+    if (!env_fp || !env_fp[0]) {
+        fpSize = (CrInt32u)sizeof(fingerprint);
+        std::cout << "🔐 Fetching fingerprint..." << std::endl;
+        auto fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
+        if (CR_FAILED(fpSt) || fpSize == 0) {
+            std::cout << "⚠️  GetFingerprint failed 0x" << std::hex << fpSt << std::dec << std::endl;
+            fpSize = 0;
+        } else {
+            std::cout << "✅ Fingerprint fetched (size=" << fpSize << ")" << std::endl;
+        }
+    } else {
+        std::cout << "🔐 Using SONY_FINGERPRINT from env" << std::endl;
     }
 
     const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
@@ -296,7 +369,6 @@ int main() {
     const char* user = std::getenv("SONY_USER");
     if (user && !user[0]) user = nullptr;
 
-    const char* env_fp = std::getenv("SONY_FINGERPRINT");
     const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
     CrInt32u fp_len = 0;
     const char* fp_ptr = select_fingerprint(env_fp, env_fp_len, fingerprint, fpSize, &fp_len);
@@ -321,16 +393,63 @@ int main() {
 
     std::cout << "✅ Connected!" << std::endl;
 
-    // ISO -> WB -> Shutter -> FPS -> Project Rate (TimeCodeFormat)
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // Dump property list summary for debugging
+    {
+        SCRSDK::CrDeviceProperty* props = nullptr;
+        CrInt32 num_props = 0;
+        auto err = SCRSDK::GetDeviceProperties(device_handle, &props, &num_props);
+        if (!CR_FAILED(err) && props && num_props > 0) {
+            std::cout << "📋 GetDeviceProperties count=" << num_props << std::endl;
+            const char* dump_env = std::getenv("SONY_DUMP_PROPERTIES");
+            if (dump_env && dump_env[0] == '1') {
+                for (CrInt32 i = 0; i < num_props; ++i) {
+                    std::cout << "  - code=0x" << std::hex << props[i].GetCode() << std::dec
+                              << " type=0x" << std::hex << props[i].GetValueType() << std::dec
+                              << " size=" << props[i].GetValueSize() << std::endl;
+                }
+            }
+        } else {
+            std::cout << "❌ GetDeviceProperties failed 0x" << std::hex << err << std::dec
+                      << " num_props=" << num_props << std::endl;
+        }
+        if (props) SCRSDK::ReleaseDeviceProperties(device_handle, props);
+    }
+
+    print_status_properties(device_handle, "Status");
+
+    // ISO -> WB -> Shutter -> Timeline FPS (Movie_Recording_FrameRateSetting)
     const CrInt64u iso_target = ((CrInt64u)CrISO_Normal << 24) | 800;
-    choose_and_set_property(device_handle, CrDeviceProperty_IsoSensitivity, "ISO", true, iso_target);
-    choose_and_set_property(device_handle, CrDeviceProperty_WhiteBalance, "WhiteBalance", true, CrWhiteBalance_Daylight);
-    choose_and_set_property(device_handle, CrDeviceProperty_ShutterSpeed, "ShutterSpeed", false, 0);
-    choose_and_set_property(device_handle, CrDeviceProperty_Movie_Recording_FrameRateSetting, "FrameRate", false, 0);
-    choose_and_set_property(device_handle, CrDeviceProperty_TimeCodeFormat, "ProjectRate(TimeCodeFormat)", false, 0);
+    set_property_direct(device_handle, CrDeviceProperty_IsoSensitivity, CrDataType_UInt32Array, iso_target, "ISO");
+    set_property_direct(device_handle, CrDeviceProperty_WhiteBalance, CrDataType_UInt16Array, CrWhiteBalance_Daylight, "WhiteBalance");
+    // ShutterSpeed: attempt to keep current if available, else skip
+    {
+        CrDataType type = CrDataType_UInt32Array;
+        CrInt64u current = 0;
+        if (get_property_info(device_handle, CrDeviceProperty_ShutterSpeed, type, current)) {
+            set_property_value(device_handle, CrDeviceProperty_ShutterSpeed, type, current);
+            std::cout << "✅ ShutterSpeed set to current value" << std::endl;
+        } else {
+            std::cout << "⚠️  ShutterSpeed not found; skipping" << std::endl;
+        }
+    }
+    set_property_direct(device_handle, CrDeviceProperty_Movie_Recording_FrameRateSetting, CrDataType_UInt8Array,
+                        CrRecordingFrameRateSettingMovie_24p, "TimelineFPS");
 
     std::cout << "\n🔌 Disconnecting..." << std::endl;
-    SCRSDK::Disconnect(device_handle);
+    const char* skip_disc = std::getenv("SONY_SKIP_DISCONNECT");
+    if (!(skip_disc && skip_disc[0] == '1')) {
+        SCRSDK::Disconnect(device_handle);
+        SCRSDK::ReleaseDevice(device_handle);
+    } else {
+        std::cout << "⚠️  SONY_SKIP_DISCONNECT=1: skipping disconnect" << std::endl;
+    }
+    const char* fast_exit = std::getenv("SONY_FAST_EXIT");
+    if (fast_exit && fast_exit[0] == '1') {
+        std::cout << "⚠️  SONY_FAST_EXIT=1: exiting without SDK release" << std::endl;
+        std::_Exit(0);
+    }
     camInfo->Release();
     SCRSDK::Release();
     std::cout << "✅ Test completed!" << std::endl;

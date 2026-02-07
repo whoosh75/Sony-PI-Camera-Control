@@ -1,6 +1,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <unistd.h>
+#include <algorithm>
+#include <thread>
+#include <chrono>
 #include "protocol.hpp"
 #include "udp_server.hpp"
 #include <cstdlib>
@@ -15,6 +18,46 @@ using namespace ccu;
 static bool g_run_state = false; // reported state (until we subscribe to CRSDK state)
 static ccu::SonyBackend g_sony;
 
+static uint32_t read_env_u32(const char* name) {
+  const char* v = std::getenv(name);
+  if (!v || !v[0]) return 0;
+  return (uint32_t)std::strtoul(v, nullptr, 0);
+}
+
+static uint32_t clamp_percent(uint32_t v) {
+  if (v > 100u) return 100u;
+  return v;
+}
+
+static uint32_t battery_percent_from_status(const ccu::SonyBackend::Status& st) {
+  if (st.battery_remain != 0xFFFFFFFFu && st.battery_remain <= 100u) {
+    return st.battery_remain;
+  }
+
+  switch (st.battery_level) {
+    case SCRSDK::CrBatteryLevel_PreEndBattery: return 5;
+    case SCRSDK::CrBatteryLevel_1_4: return 25;
+    case SCRSDK::CrBatteryLevel_2_4: return 50;
+    case SCRSDK::CrBatteryLevel_3_4: return 75;
+    case SCRSDK::CrBatteryLevel_4_4: return 100;
+    case SCRSDK::CrBatteryLevel_1_3: return 33;
+    case SCRSDK::CrBatteryLevel_2_3: return 66;
+    case SCRSDK::CrBatteryLevel_3_3: return 100;
+    case SCRSDK::CrBatteryLevel_USBPowerSupply: return 100;
+    case SCRSDK::CrBatteryLevel_PreEnd_PowerSupply: return 5;
+    case SCRSDK::CrBatteryLevel_1_4_PowerSupply: return 25;
+    case SCRSDK::CrBatteryLevel_2_4_PowerSupply: return 50;
+    case SCRSDK::CrBatteryLevel_3_4_PowerSupply: return 75;
+    case SCRSDK::CrBatteryLevel_4_4_PowerSupply: return 100;
+    default:
+      return 0xFFFFFFFFu;
+  }
+}
+
+static uint32_t media_time_value(uint32_t remaining_time) {
+  return remaining_time;
+}
+
 int main(int argc, char** argv) {
   const uint16_t port = (argc >= 2) ? (uint16_t)std::atoi(argv[1]) : 5555;
 
@@ -24,21 +67,22 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::printf("ccu_daemon listening UDP :%u\n", port);
-// Attempt camera connect at startup (non-fatal if camera not present)
-g_sony.connect_first_camera();
+
+  // Background connect loop (non-blocking for UDP)
+  std::thread connect_thread([]() {
+    while (true) {
+      if (!g_sony.is_connected()) {
+        g_sony.connect_first_camera();
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+  });
+  connect_thread.detach();
 
   uint8_t rxbuf[512];
   uint8_t txbuf[512];
 
   while (true) {
-// Non-blocking periodic connect retry (every ~2s) until a camera is present
-static uint32_t last_try_ms = 0;
-const uint32_t now_ms = (uint32_t)(::time(nullptr) * 1000u);
-if (!g_sony.is_connected() && (now_ms - last_try_ms) > 2000u) {
-  last_try_ms = now_ms;
-  g_sony.connect_first_camera();
-}
-
     sockaddr_in from{};
     int n = udp.recv(rxbuf, sizeof(rxbuf), from);
     if (n <= 0) { usleep(1000); continue; }
@@ -174,6 +218,74 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
 
       std::printf("OPTIONS %s count=%u current=0x%08X\n", label, (unsigned)count, (unsigned)opts.current_value);
       const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, payload, off);
+      udp.sendto(txbuf, outn, from);
+      continue;
+    }
+
+    if (h.cmd_or_code == CMD_GET_STATUS) {
+      ccu::SonyBackend::Status st{};
+      const bool ok = g_sony.get_status(st);
+      if (!ok) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      const uint32_t battery_pct = battery_percent_from_status(st);
+        const uint32_t media1_time = media_time_value(st.media_slot1_remaining_time);
+        const uint32_t media2_time = media_time_value(st.media_slot2_remaining_time);
+
+      // Normalize to percent in response
+      st.battery_level = battery_pct;
+      st.battery_remain = battery_pct;
+      st.battery_remain_unit = 1; // percent
+      st.media_slot1_remaining_time = media1_time;
+      st.media_slot2_remaining_time = media2_time;
+
+      auto wr32 = [&](uint8_t* p, uint32_t v) {
+        p[0] = (uint8_t)(v & 0xFF);
+        p[1] = (uint8_t)((v >> 8) & 0xFF);
+        p[2] = (uint8_t)((v >> 16) & 0xFF);
+        p[3] = (uint8_t)((v >> 24) & 0xFF);
+      };
+
+      uint8_t payload[64] = {0};
+      size_t off = 0;
+      wr32(payload + off, st.battery_level); off += 4;
+      wr32(payload + off, st.battery_remain); off += 4;
+      wr32(payload + off, st.battery_remain_unit); off += 4;
+      wr32(payload + off, st.recording_media); off += 4;
+      wr32(payload + off, st.movie_recording_media); off += 4;
+      wr32(payload + off, st.media_slot1_status); off += 4;
+      wr32(payload + off, st.media_slot1_remaining_number); off += 4;
+      wr32(payload + off, st.media_slot1_remaining_time); off += 4;
+      wr32(payload + off, st.media_slot2_status); off += 4;
+      wr32(payload + off, st.media_slot2_remaining_number); off += 4;
+      wr32(payload + off, st.media_slot2_remaining_time); off += 4;
+
+      const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, payload, off);
+      udp.sendto(txbuf, outn, from);
+      continue;
+    }
+
+    if (h.cmd_or_code == CMD_CAPTURE_STILL) {
+      if (pl_len < 1) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_BAD_FORMAT, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      const bool with_af = (pl[0] != 0);
+      const bool ok = g_sony.capture_still(with_af);
+
+      const bool selA = (h.target_mask == 0xFF) || (h.target_mask & 0x01);
+      const uint8_t ok_mask   = (selA && ok) ? 0x01 : 0x00;
+      const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
+      const uint8_t busy_mask = 0x00;
+      uint8_t ap[8] = { ok_mask, fail_mask, busy_mask, 0, 0, 0, 0, 0 };
+      const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, ap, sizeof(ap));
       udp.sendto(txbuf, outn, from);
       continue;
     }

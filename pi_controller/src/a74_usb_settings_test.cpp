@@ -69,6 +69,48 @@ static std::vector<CrInt64u> parse_values(const CrDeviceProperty& prop) {
     return out;
 }
 
+static void print_status_properties(CrDeviceHandle handle, const char* label) {
+    SCRSDK::CrDeviceProperty* props = nullptr;
+    CrInt32 num_props = 0;
+    auto err = SCRSDK::GetDeviceProperties(handle, &props, &num_props);
+    if (CR_FAILED(err) || !props || num_props <= 0) {
+        std::cout << "❌ " << label << ": GetDeviceProperties failed 0x" << std::hex << err << std::dec
+                  << " num_props=" << num_props << std::endl;
+        if (props) SCRSDK::ReleaseDeviceProperties(handle, props);
+        return;
+    }
+
+    auto print_code = [&](CrInt32u code, const char* name) {
+        for (CrInt32 i = 0; i < num_props; ++i) {
+            if (props[i].GetCode() == code) {
+                auto values = parse_values(props[i]);
+                if (!values.empty()) {
+                    std::cout << "✅ " << name << " = 0x" << std::hex << values[0] << std::dec << std::endl;
+                } else {
+                    std::cout << "✅ " << name << " (present, no value data)" << std::endl;
+                }
+                return;
+            }
+        }
+        std::cout << "⚠️  " << name << " not found" << std::endl;
+    };
+
+    std::cout << "🔋 Battery/Media status" << std::endl;
+    print_code(CrDeviceProperty_BatteryLevel, "BatteryLevel");
+    print_code(CrDeviceProperty_BatteryRemain, "BatteryRemain");
+    print_code(CrDeviceProperty_BatteryRemainDisplayUnit, "BatteryRemainDisplayUnit");
+    print_code(CrDeviceProperty_RecordingMedia, "RecordingMedia");
+    print_code(CrDeviceProperty_Movie_RecordingMedia, "Movie_RecordingMedia");
+    print_code(CrDeviceProperty_MediaSLOT1_Status, "MediaSLOT1_Status");
+    print_code(CrDeviceProperty_MediaSLOT1_RemainingNumber, "MediaSLOT1_RemainingNumber");
+    print_code(CrDeviceProperty_MediaSLOT1_RemainingTime, "MediaSLOT1_RemainingTime");
+    print_code(CrDeviceProperty_MediaSLOT2_Status, "MediaSLOT2_Status");
+    print_code(CrDeviceProperty_MediaSLOT2_RemainingNumber, "MediaSLOT2_RemainingNumber");
+    print_code(CrDeviceProperty_MediaSLOT2_RemainingTime, "MediaSLOT2_RemainingTime");
+
+    SCRSDK::ReleaseDeviceProperties(handle, props);
+}
+
 static bool choose_and_set_property(CrDeviceHandle handle,
                                     CrInt32u code,
                                     const char* label,
@@ -193,6 +235,9 @@ int main() {
     }
 
     std::cout << "✅ Connected!" << std::endl;
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    print_status_properties(device_handle, "Status");
 
     // ISO -> WB -> Shutter -> FPS
     const CrInt64u iso_target = ((CrInt64u)CrISO_Normal << 24) | 800;

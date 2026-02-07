@@ -15,6 +15,16 @@
 // Minimal device callback implementation (no-op) copied signatures from sample
 // to ensure we pass a valid callback object to SCRSDK::Connect.
 namespace {
+static const char* warning_name(CrInt32u warning) {
+  switch (warning) {
+    case SCRSDK::CrNotify_Captured_Event: return "CrNotify_Captured_Event";
+    case SCRSDK::CrWarning_MovieRecordingOperation_Result_OK: return "CrWarning_MovieRecordingOperation_Result_OK";
+    case SCRSDK::CrWarning_MovieRecordingOperation_Result_NG: return "CrWarning_MovieRecordingOperation_Result_NG";
+    case SCRSDK::CrWarning_MovieRecordingOperation_Result_Invalid: return "CrWarning_MovieRecordingOperation_Result_Invalid";
+    default: return "(unknown)";
+  }
+}
+
 struct DeviceCallbackImpl : public SCRSDK::IDeviceCallback {
   // Inherited via IDeviceCallback - log events for debugging
   virtual void OnConnected(SCRSDK::DeviceConnectionVersioin version) override {
@@ -26,8 +36,13 @@ struct DeviceCallbackImpl : public SCRSDK::IDeviceCallback {
   virtual void OnPropertyChanged() override { std::printf("[DeviceCallback] OnPropertyChanged\n"); }
   virtual void OnLvPropertyChanged() override { std::printf("[DeviceCallback] OnLvPropertyChanged\n"); }
   virtual void OnCompleteDownload(CrChar* filename, CrInt32u type) override { std::printf("[DeviceCallback] OnCompleteDownload(filename=%s,type=%u)\n", filename ? filename : "(null)", (unsigned)type); }
-  virtual void OnWarning(CrInt32u warning) override { std::printf("[DeviceCallback] OnWarning(0x%08X)\n", (unsigned)warning); }
-  virtual void OnWarningExt(CrInt32u warning, CrInt32 param1, CrInt32 param2, CrInt32 param3) override { std::printf("[DeviceCallback] OnWarningExt(0x%08X,%d,%d,%d)\n", (unsigned)warning, (int)param1, (int)param2, (int)param3); }
+  virtual void OnWarning(CrInt32u warning) override {
+    std::printf("[DeviceCallback] OnWarning(0x%08X %s)\n", (unsigned)warning, warning_name(warning));
+  }
+  virtual void OnWarningExt(CrInt32u warning, CrInt32 param1, CrInt32 param2, CrInt32 param3) override {
+    std::printf("[DeviceCallback] OnWarningExt(0x%08X %s) params=(%d,%d,%d)\n",
+                (unsigned)warning, warning_name(warning), (int)param1, (int)param2, (int)param3);
+  }
   virtual void OnError(CrInt32u error) override { std::printf("[DeviceCallback] OnError(0x%08X)\n", (unsigned)error); }
   virtual void OnPropertyChangedCodes(CrInt32u num, CrInt32u* codes) override { std::printf("[DeviceCallback] OnPropertyChangedCodes(num=%u)\n", (unsigned)num); }
   virtual void OnLvPropertyChangedCodes(CrInt32u num, CrInt32u* codes) override { std::printf("[DeviceCallback] OnLvPropertyChangedCodes(num=%u)\n", (unsigned)num); }
@@ -83,6 +98,24 @@ static size_t element_size(SCRSDK::CrDataType type) {
     default:
       return 0;
   }
+}
+
+static bool get_prop_first_value(const SCRSDK::CrDeviceProperty& prop, uint32_t& out) {
+  const CrInt8u* raw = prop.GetValues();
+  const CrInt32u raw_size = prop.GetValueSize();
+  const SCRSDK::CrDataType type = prop.GetValueType();
+  const size_t es = element_size(type);
+  if (raw && raw_size >= es && es > 0) {
+    switch (es) {
+      case 1: out = *reinterpret_cast<const CrInt8u*>(raw); return true;
+      case 2: out = *reinterpret_cast<const CrInt16u*>(raw); return true;
+      case 4: out = *reinterpret_cast<const CrInt32u*>(raw); return true;
+      case 8: out = (uint32_t)(*reinterpret_cast<const CrInt64u*>(raw)); return true;
+      default: break;
+    }
+  }
+  out = (uint32_t)prop.GetCurrentValue();
+  return true;
 }
 
 static bool connect_camera(SCRSDK::ICrCameraObjectInfo* cam,
@@ -638,44 +671,53 @@ bool SonyBackend::connect_first_camera() {
   std::printf("[SonyBackend] Selected camera model=%s conn=%s\n",
               m_camera_model.c_str(), m_connection_type.c_str());
 
+  const bool is_usb = (m_connection_type == "USB");
+
   // Connect requires non-const
   SCRSDK::ICrCameraObjectInfo* camInfo =
       const_cast<SCRSDK::ICrCameraObjectInfo*>(camInfoConst);
 
-  // 3) Fingerprint (Ethernet requires this)
+  // 3) Fingerprint + credentials (Ethernet requires this; USB does not)
   char fingerprint[4096] = {0};
-  CrInt32u fpSize = (CrInt32u)sizeof(fingerprint); // NOTE: NOT SCRSDK::CrInt32u
-  SCRSDK::CrError fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
+  CrInt32u fpSize = 0;
+  const char* user = nullptr;
+  const char* pass = nullptr;
 
-  std::string fp_norm;
-  if (CR_FAILED(fpSt) || fpSize == 0) {
-    std::printf("[SonyBackend] GetFingerprint failed (0x%08X)\n", (unsigned)fpSt);
-    fpSize = 0; // still attempt connect
-  } else {
-    fp_norm = normalize_fingerprint(fingerprint, fpSize);
+  if (!is_usb) {
+    fpSize = (CrInt32u)sizeof(fingerprint);
+    SCRSDK::CrError fpSt = SCRSDK::GetFingerprint(camInfo, fingerprint, &fpSize);
 
-    std::printf("[SonyBackend] Fingerprint OK (size=%u padded=%u)\n", (unsigned)fpSize, (unsigned)fp_norm.size());
-    std::printf("[SonyBackend] fingerprint (padded):\n%s\n", fp_norm.c_str());
+    std::string fp_norm;
+    if (CR_FAILED(fpSt) || fpSize == 0) {
+      std::printf("[SonyBackend] GetFingerprint failed (0x%08X)\n", (unsigned)fpSt);
+      fpSize = 0; // still attempt connect
+    } else {
+      fp_norm = normalize_fingerprint(fingerprint, fpSize);
 
-    const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
-    if (!(accept_fp && accept_fp[0] && accept_fp[0] == '1')) {
-      std::printf("[SonyBackend] Fingerprint requires acceptance. Set SONY_ACCEPT_FINGERPRINT=1 to auto-accept and connect.\n");
+      std::printf("[SonyBackend] Fingerprint OK (size=%u padded=%u)\n", (unsigned)fpSize, (unsigned)fp_norm.size());
+      std::printf("[SonyBackend] fingerprint (padded):\n%s\n", fp_norm.c_str());
+
+      const char* accept_fp = std::getenv("SONY_ACCEPT_FINGERPRINT");
+      if (!(accept_fp && accept_fp[0] && accept_fp[0] == '1')) {
+        std::printf("[SonyBackend] Fingerprint requires acceptance. Set SONY_ACCEPT_FINGERPRINT=1 to auto-accept and connect.\n");
+        enumInfo->Release();
+        return false;
+      }
+    }
+
+    // Credentials from env (match RemoteCli behaviour)
+    user = std::getenv("SONY_USER");
+    pass = std::getenv("SONY_PASS");
+
+    if (!pass || !pass[0]) {
+      std::printf("[SonyBackend] Missing SONY_PASS env var\n");
       enumInfo->Release();
       return false;
     }
+    if (!user || !user[0]) user = nullptr;
+  } else {
+    std::printf("[SonyBackend] USB connection: skipping fingerprint and password\n");
   }
-
-  // 4) Credentials from env (match RemoteCli behaviour)
-  // RemoteCli passes NULL for user id and only uses the SSH password, so we do the same.
-  const char* user = std::getenv("SONY_USER"); // can be null - pass as nullptr to Connect
-  const char* pass = std::getenv("SONY_PASS"); // should be your SSH password prompt in RemoteCli
-
-  if (!pass || !pass[0]) {
-    std::printf("[SonyBackend] Missing SONY_PASS env var\n");
-    enumInfo->Release();
-    return false;
-  }
-  if (!user || !user[0]) user = nullptr;
 
   // 5) Connect (Remote Control Mode) with retries + backoff using direct CRSDK Connect
   std::printf("[SonyBackend] Connect (Remote Control Mode) via direct CRSDK Connect...\n");
@@ -687,7 +729,7 @@ bool SonyBackend::connect_first_camera() {
   const CrInt32u env_fp_len = (env_fp && env_fp[0]) ? (CrInt32u)std::strlen(env_fp) : 0;
   CrInt32u fp_len = 0;
   const char* fp_ptr = nullptr;
-  if (accept_fp && accept_fp[0] == '1') {
+  if (!is_usb && accept_fp && accept_fp[0] == '1') {
     fp_ptr = select_fingerprint(env_fp, env_fp_len, fingerprint, fpSize, &fp_len);
     if (env_fp && env_fp[0]) {
       std::printf("[SonyBackend] Using fingerprint from SONY_FINGERPRINT (len=%u)\n", (unsigned)fp_len);
@@ -835,6 +877,70 @@ bool SonyBackend::get_property_options(CrInt32u property_code, PropertyOptions& 
 
   SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
   return true;
+}
+
+bool SonyBackend::get_status(Status& out) {
+  if (!is_connected()) {
+    std::printf("[SonyBackend] get_status: not connected\n");
+    return false;
+  }
+
+  SCRSDK::CrDeviceProperty* props = nullptr;
+  CrInt32 num_props = 0;
+  auto err = SCRSDK::GetDeviceProperties(m_device_handle, &props, &num_props);
+  if (CR_FAILED(err) || !props || num_props <= 0) {
+    std::printf("[SonyBackend] get_status: GetDeviceProperties failed 0x%08X num_props=%d\n",
+                (unsigned)err, (int)num_props);
+    if (props) SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+    return false;
+  }
+
+  auto get_code = [&](CrInt32u code, uint32_t& dest) {
+    for (CrInt32 i = 0; i < num_props; ++i) {
+      if (props[i].GetCode() == code) {
+        uint32_t v = 0;
+        if (get_prop_first_value(props[i], v)) {
+          dest = v;
+        }
+        return;
+      }
+    }
+  };
+
+  get_code(SCRSDK::CrDeviceProperty_BatteryLevel, out.battery_level);
+  get_code(SCRSDK::CrDeviceProperty_BatteryRemain, out.battery_remain);
+  get_code(SCRSDK::CrDeviceProperty_BatteryRemainDisplayUnit, out.battery_remain_unit);
+  get_code(SCRSDK::CrDeviceProperty_RecordingMedia, out.recording_media);
+  get_code(SCRSDK::CrDeviceProperty_Movie_RecordingMedia, out.movie_recording_media);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT1_Status, out.media_slot1_status);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT1_RemainingNumber, out.media_slot1_remaining_number);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT1_RemainingTime, out.media_slot1_remaining_time);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_Status, out.media_slot2_status);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingNumber, out.media_slot2_remaining_number);
+  get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingTime, out.media_slot2_remaining_time);
+
+  SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+  return true;
+}
+
+bool SonyBackend::capture_still(bool with_af) {
+  if (!is_connected()) {
+    std::printf("[SonyBackend] capture_still: not connected\n");
+    return false;
+  }
+
+  const SCRSDK::CrCommandId cmd_id = with_af
+    ? SCRSDK::CrCommandId::CrCommandId_S1andRelease
+    : SCRSDK::CrCommandId::CrCommandId_Release;
+
+  auto st_down = SCRSDK::SendCommand(m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Down);
+  std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  auto st_up = SCRSDK::SendCommand(m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Up);
+
+  std::printf("[SonyBackend] capture_still(%d): cmd=%d down=0x%08X up=0x%08X\n",
+              with_af ? 1 : 0, (int)cmd_id, (unsigned)st_down, (unsigned)st_up);
+
+  return CR_SUCCEEDED(st_down) || CR_SUCCEEDED(st_up);
 }
 
 } // namespace ccu

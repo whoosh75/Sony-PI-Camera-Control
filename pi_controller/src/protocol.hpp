@@ -16,6 +16,8 @@ enum : uint8_t {
 enum : uint8_t {
   CMD_RUNSTOP = 0x10,
   CMD_GET_OPTIONS = 0x20,
+  CMD_GET_STATUS = 0x30,
+  CMD_CAPTURE_STILL = 0x31,
 };
 
 enum : uint8_t {
