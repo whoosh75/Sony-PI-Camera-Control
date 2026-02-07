@@ -43,6 +43,14 @@ add_executable(a74_usb_settings_test
   src/a74_usb_settings_test.cpp
 )
 
+add_executable(a74_eth_settings_test
+  src/a74_eth_settings_test.cpp
+)
+
+add_executable(a74_eth_stills_test
+  src/a74_eth_stills_test.cpp
+)
+
 add_executable(minimal_test
   src/minimal_test.cpp
 )
@@ -83,6 +91,8 @@ target_compile_options(sony_a74_usb_test PRIVATE -fsigned-char)
 target_compile_options(movie_record_test PRIVATE -fsigned-char)
 target_compile_options(a74_usb_record_test PRIVATE -fsigned-char)
 target_compile_options(a74_usb_settings_test PRIVATE -fsigned-char)
+target_compile_options(a74_eth_settings_test PRIVATE -fsigned-char)
+target_compile_options(a74_eth_stills_test PRIVATE -fsigned-char)
 target_compile_options(minimal_test PRIVATE -fsigned-char)
 target_compile_options(simple_sdk_test PRIVATE -fsigned-char)
 target_compile_options(simple_recording_test PRIVATE -fsigned-char)
@@ -190,6 +200,18 @@ target_include_directories(ccu_daemon PRIVATE
     ${CMAKE_SOURCE_DIR}/src
   )
 
+  target_include_directories(a74_eth_settings_test PRIVATE
+    ${CRSDK_ROOT}/app
+    ${CRSDK_ROOT}/app/CRSDK
+    ${CMAKE_SOURCE_DIR}/src
+  )
+
+  target_include_directories(a74_eth_stills_test PRIVATE
+    ${CRSDK_ROOT}/app
+    ${CRSDK_ROOT}/app/CRSDK
+    ${CMAKE_SOURCE_DIR}/src
+  )
+
   # Configure minimal_test exactly like ccu_diag for debugging
   target_include_directories(minimal_test PRIVATE
     ${CRSDK_ROOT}/app
@@ -252,6 +274,16 @@ target_include_directories(ccu_daemon PRIVATE
     ${CRSDK_ROOT}/external/crsdk/CrAdapter
   )
 
+  target_link_directories(a74_eth_settings_test PRIVATE
+    ${CRSDK_ROOT}/external/crsdk
+    ${CRSDK_ROOT}/external/crsdk/CrAdapter
+  )
+
+  target_link_directories(a74_eth_stills_test PRIVATE
+    ${CRSDK_ROOT}/external/crsdk
+    ${CRSDK_ROOT}/external/crsdk/CrAdapter
+  )
+
   target_link_libraries(a74_usb_settings_test PRIVATE
     Cr_Core
     monitor_protocol
@@ -260,6 +292,30 @@ target_include_directories(ccu_daemon PRIVATE
     Cr_PTP_IP
     usb-1.0
     ssh2
+  )
+
+  target_link_libraries(a74_eth_settings_test PRIVATE
+    Cr_Core
+    monitor_protocol
+    monitor_protocol_pf
+    Cr_PTP_USB
+    Cr_PTP_IP
+    usb-1.0
+    ssh2
+    pthread
+    dl
+  )
+
+  target_link_libraries(a74_eth_stills_test PRIVATE
+    Cr_Core
+    monitor_protocol
+    monitor_protocol_pf
+    Cr_PTP_USB
+    Cr_PTP_IP
+    usb-1.0
+    ssh2
+    pthread
+    dl
   )
 
   target_link_directories(minimal_test PRIVATE
