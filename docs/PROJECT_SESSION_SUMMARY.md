@@ -118,7 +118,7 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 ✅ Recording: `CrCommandId_MovieRecord` Down/Up confirmed
 ✅ Settings: ISO/WB/Shutter/FPS set via direct API
 ✅ Stills: Release + S1andRelease confirmed
-✅ Status: Battery/media fields exposed via UDP
+✅ Status: Battery/media fields exposed via UDP (media time in minutes for CCU)
 📋 Setup Guide: Complete with troubleshooting steps  
 🎯 Expected Benefits: Faster connection, no network dependency
 

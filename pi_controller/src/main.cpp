@@ -55,6 +55,9 @@ static uint32_t battery_percent_from_status(const ccu::SonyBackend::Status& st) 
 }
 
 static uint32_t media_time_value(uint32_t remaining_time) {
+  // A74 reports remaining time in seconds; convert to whole minutes.
+  if (remaining_time == 0xFFFFFFFFu) return remaining_time;
+  if (remaining_time >= 60u) return remaining_time / 60u;
   return remaining_time;
 }
 

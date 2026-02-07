@@ -100,12 +100,29 @@ Status response (11 x uint32):
 5) `movie_recording_media`
 6) `media_slot1_status`
 7) `media_slot1_remaining_number`
-8) `media_slot1_remaining_time`
+8) `media_slot1_remaining_time` (minutes)
 9) `media_slot2_status`
 10) `media_slot2_remaining_number`
-11) `media_slot2_remaining_time`
+11) `media_slot2_remaining_time` (minutes)
 
-Note: media remaining time is returned as-is (no percent normalization). Battery fields are normalized to percent when available.
+Note: media remaining time is returned in minutes (converted from camera seconds). Battery fields are normalized to percent when available.
+
+## CCU Status Polling (UDP)
+The CCU should poll `CMD_GET_STATUS` to show:
+- Battery percent (from fields 1–2)
+- Slot remaining time in minutes (fields 8 and 11)
+
+Example (movie mode):
+- Slot1: 132 min (2h12m)
+- Slot2: 156 min (2h36m)
+
+Minimal CCU parsing (pseudo-code):
+1. Send `CMD_GET_STATUS` with empty payload.
+2. Parse 11 x uint32 values from response payload.
+3. Use:
+    - `battery_percent = payload[0]` (or payload[1])
+    - `slot1_minutes = payload[7]`
+    - `slot2_minutes = payload[10]`
 
 ## File Locations
 - **API**: `/home/whoosh/camera-control/pi_controller/build/working_sony_api.py`
