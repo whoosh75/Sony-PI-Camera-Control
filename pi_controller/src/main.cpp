@@ -4,6 +4,10 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <array>
+#include <mutex>
+#include <vector>
+#include <string>
 #include "protocol.hpp"
 #include "udp_server.hpp"
 #include <cstdlib>
@@ -15,8 +19,122 @@
 
 using namespace ccu;
 
-static bool g_run_state = false; // reported state (until we subscribe to CRSDK state)
-static ccu::SonyBackend g_sony;
+static std::array<bool, 8> g_run_state = {}; // reported state per target
+static std::array<ccu::SonyBackend, 8> g_sony;
+
+struct SlotConfig {
+  bool enabled = false;
+  std::string user;
+  std::string pass;
+  std::string fingerprint;
+  std::string accept_fingerprint;
+  std::string camera_ip;
+  std::string camera_mac;
+};
+
+static std::array<SlotConfig, 8> g_slots;
+static std::mutex g_env_mutex;
+
+static bool env_is_true(const char* v) {
+  return v && v[0] && v[0] == '1';
+}
+
+static std::string env_key(const char* base, int idx) {
+  return std::string(base) + "_" + std::to_string(idx);
+}
+
+static const char* env_slot(const char* base, int idx) {
+  const std::string key = env_key(base, idx);
+  const char* v = std::getenv(key.c_str());
+  if (v && v[0]) return v;
+  return std::getenv(base);
+}
+
+static SlotConfig load_slot_config(int idx) {
+  SlotConfig cfg;
+  const char* enable = std::getenv(env_key("SONY_ENABLE", idx).c_str());
+  const char* ip = env_slot("SONY_CAMERA_IP", idx);
+  const char* mac = env_slot("SONY_CAMERA_MAC", idx);
+  const char* user = env_slot("SONY_USER", idx);
+  const char* pass = env_slot("SONY_PASS", idx);
+  const char* fp = env_slot("SONY_FINGERPRINT", idx);
+  const char* accept = env_slot("SONY_ACCEPT_FINGERPRINT", idx);
+
+  cfg.enabled = env_is_true(enable) || (ip && ip[0]);
+  if (user) cfg.user = user;
+  if (pass) cfg.pass = pass;
+  if (fp) cfg.fingerprint = fp;
+  if (accept) cfg.accept_fingerprint = accept;
+  if (ip) cfg.camera_ip = ip;
+  if (mac) cfg.camera_mac = mac;
+  return cfg;
+}
+
+struct EnvBackupEntry {
+  std::string key;
+  bool had = false;
+  std::string value;
+};
+
+class EnvOverride {
+public:
+  explicit EnvOverride(const SlotConfig& cfg) { apply(cfg); }
+  ~EnvOverride() { restore(); }
+
+private:
+  std::vector<EnvBackupEntry> m_entries;
+
+  void save_and_set(const char* key, const std::string& value) {
+    if (value.empty()) return;
+    EnvBackupEntry entry;
+    entry.key = key;
+    const char* prior = std::getenv(key);
+    if (prior) {
+      entry.had = true;
+      entry.value = prior;
+    }
+    m_entries.push_back(entry);
+    setenv(key, value.c_str(), 1);
+  }
+
+  void apply(const SlotConfig& cfg) {
+    save_and_set("SONY_USER", cfg.user);
+    save_and_set("SONY_PASS", cfg.pass);
+    save_and_set("SONY_FINGERPRINT", cfg.fingerprint);
+    save_and_set("SONY_ACCEPT_FINGERPRINT", cfg.accept_fingerprint);
+    save_and_set("SONY_CAMERA_IP", cfg.camera_ip);
+    save_and_set("SONY_CAMERA_MAC", cfg.camera_mac);
+  }
+
+  void restore() {
+    for (auto it = m_entries.rbegin(); it != m_entries.rend(); ++it) {
+      if (it->had) {
+        setenv(it->key.c_str(), it->value.c_str(), 1);
+      } else {
+        unsetenv(it->key.c_str());
+      }
+    }
+  }
+};
+
+static bool slot_selected(uint8_t mask, int idx) {
+  if (mask == 0xFF) return g_slots[idx].enabled;
+  return (mask & (1u << idx)) != 0;
+}
+
+static int pick_slot(uint8_t mask) {
+  for (int i = 0; i < 8; ++i) {
+    if (slot_selected(mask, i)) return i;
+  }
+  return -1;
+}
+
+static bool connect_slot(int idx) {
+  if (!g_slots[idx].enabled) return false;
+  std::lock_guard<std::mutex> lock(g_env_mutex);
+  EnvOverride env(g_slots[idx]);
+  return g_sony[idx].connect_first_camera();
+}
 
 static uint32_t read_env_u32(const char* name) {
   const char* v = std::getenv(name);
@@ -64,6 +182,17 @@ static uint32_t media_time_value(uint32_t remaining_time) {
 int main(int argc, char** argv) {
   const uint16_t port = (argc >= 2) ? (uint16_t)std::atoi(argv[1]) : 5555;
 
+  for (int i = 0; i < 8; ++i) {
+    g_slots[i] = load_slot_config(i);
+  }
+  bool any_enabled = false;
+  for (int i = 0; i < 8; ++i) {
+    if (g_slots[i].enabled) { any_enabled = true; break; }
+  }
+  if (!any_enabled) {
+    g_slots[0].enabled = true;
+  }
+
   UdpServer udp;
   if (!udp.open(port)) {
     std::fprintf(stderr, "Failed to open UDP port %u\n", port);
@@ -74,8 +203,11 @@ int main(int argc, char** argv) {
   // Background connect loop (non-blocking for UDP)
   std::thread connect_thread([]() {
     while (true) {
-      if (!g_sony.is_connected()) {
-        g_sony.connect_first_camera();
+      for (int i = 0; i < 8; ++i) {
+        if (!g_slots[i].enabled) continue;
+        if (!g_sony[i].is_connected()) {
+          connect_slot(i);
+        }
       }
       std::this_thread::sleep_for(std::chrono::seconds(2));
     }
@@ -119,22 +251,27 @@ int main(int argc, char** argv) {
 
       const bool run = (pl[0] != 0);
 
-std::printf("RUNSTOP requested: %d (seq=%u target=0x%02X)\n",
-            run ? 1 : 0, h.seq, h.target_mask);
+      std::printf("RUNSTOP requested: %d (seq=%u target=0x%02X)\n",
+                  run ? 1 : 0, h.seq, h.target_mask);
 
-// Apply via CRSDK backend (currently stub until we paste CRSDK code)
-const bool ok = g_sony.set_runstop(run);
-if (ok) g_run_state = run;
+      uint8_t ok_mask = 0;
+      uint8_t fail_mask = 0;
+      uint8_t busy_mask = 0;
+      uint8_t state_run_mask = 0;
+      uint8_t state_known_mask = 0;
 
-
-      // ACK payload (8 bytes)
-      // ok_mask: pretend CamA (bit0) ok if target includes it (or ALL)
-      const bool selA = (h.target_mask == 0xFF) || (h.target_mask & 0x01);
-const uint8_t ok_mask   = (selA && ok) ? 0x01 : 0x00;
-const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
-      const uint8_t busy_mask = 0x00;
-      const uint8_t state_run_mask = g_run_state ? 0x01 : 0x00;
-      const uint8_t state_known_mask = 0x01;
+      for (int i = 0; i < 8; ++i) {
+        if (!slot_selected(h.target_mask, i)) continue;
+        const bool ok = g_sony[i].set_runstop(run);
+        if (ok) {
+          ok_mask |= (1u << i);
+          g_run_state[i] = run;
+          state_known_mask |= (1u << i);
+        } else {
+          fail_mask |= (1u << i);
+        }
+        if (g_run_state[i]) state_run_mask |= (1u << i);
+      }
 
       uint8_t ap[8] = { ok_mask, fail_mask, busy_mask, state_run_mask, state_known_mask, 0,0,0 };
       const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, ap, sizeof(ap));
@@ -146,6 +283,14 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
       if (pl_len < 1) {
         uint8_t ap[8] = {0};
         const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_BAD_FORMAT, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      const int slot = pick_slot(h.target_mask);
+      if (slot < 0) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
         udp.sendto(txbuf, outn, from);
         continue;
       }
@@ -180,7 +325,7 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
       }
 
       ccu::SonyBackend::PropertyOptions opts;
-      const bool ok = g_sony.get_property_options(prop_code, opts);
+      const bool ok = g_sony[slot].get_property_options(prop_code, opts);
       if (!ok) {
         uint8_t ap[8] = {0};
         const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
@@ -227,7 +372,15 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
 
     if (h.cmd_or_code == CMD_GET_STATUS) {
       ccu::SonyBackend::Status st{};
-      const bool ok = g_sony.get_status(st);
+      const int slot = pick_slot(h.target_mask);
+      if (slot < 0) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      const bool ok = g_sony[slot].get_status(st);
       if (!ok) {
         uint8_t ap[8] = {0};
         const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
@@ -253,7 +406,7 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
         p[3] = (uint8_t)((v >> 24) & 0xFF);
       };
 
-      uint8_t payload[64] = {0};
+      uint8_t payload[128] = {0};
       size_t off = 0;
       wr32(payload + off, st.battery_level); off += 4;
       wr32(payload + off, st.battery_remain); off += 4;
@@ -266,6 +419,22 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
       wr32(payload + off, st.media_slot2_status); off += 4;
       wr32(payload + off, st.media_slot2_remaining_number); off += 4;
       wr32(payload + off, st.media_slot2_remaining_time); off += 4;
+
+      // Append connection type + model string
+      uint8_t conn_type = 0;
+      const std::string& conn = g_sony[slot].connection_type();
+      if (conn == "USB") conn_type = 1;
+      else if (conn == "IP" || conn == "Ethernet") conn_type = 2;
+
+      const std::string& model = g_sony[slot].camera_model();
+      const uint8_t model_len = (uint8_t)std::min<size_t>(model.size(), 32);
+
+      payload[off++] = conn_type;
+      payload[off++] = model_len;
+      if (model_len > 0) {
+        std::memcpy(payload + off, model.data(), model_len);
+        off += model_len;
+      }
 
       const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, payload, off);
       udp.sendto(txbuf, outn, from);
@@ -281,12 +450,32 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
       }
 
       const bool with_af = (pl[0] != 0);
-      const bool ok = g_sony.capture_still(with_af);
 
-      const bool selA = (h.target_mask == 0xFF) || (h.target_mask & 0x01);
-      const uint8_t ok_mask   = (selA && ok) ? 0x01 : 0x00;
-      const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
-      const uint8_t busy_mask = 0x00;
+      uint8_t ok_mask = 0;
+      uint8_t fail_mask = 0;
+      uint8_t busy_mask = 0;
+      for (int i = 0; i < 8; ++i) {
+        if (!slot_selected(h.target_mask, i)) continue;
+        const bool ok = g_sony[i].capture_still(with_af);
+        if (ok) ok_mask |= (1u << i);
+        else fail_mask |= (1u << i);
+      }
+      uint8_t ap[8] = { ok_mask, fail_mask, busy_mask, 0, 0, 0, 0, 0 };
+      const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, ap, sizeof(ap));
+      udp.sendto(txbuf, outn, from);
+      continue;
+    }
+
+    if (h.cmd_or_code == CMD_DISCOVER) {
+      uint8_t ok_mask = 0;
+      uint8_t fail_mask = 0;
+      uint8_t busy_mask = 0;
+      for (int i = 0; i < 8; ++i) {
+        if (!slot_selected(h.target_mask, i)) continue;
+        const bool ok = connect_slot(i);
+        if (ok) ok_mask |= (1u << i);
+        else fail_mask |= (1u << i);
+      }
       uint8_t ap[8] = { ok_mask, fail_mask, busy_mask, 0, 0, 0, 0, 0 };
       const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, ap, sizeof(ap));
       udp.sendto(txbuf, outn, from);

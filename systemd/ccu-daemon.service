@@ -1,0 +1,15 @@
+[Unit]
+Description=CCU Sony CRSDK UDP daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/whoosh/camera-control
+EnvironmentFile=-/etc/ccu-daemon.env
+ExecStart=/home/whoosh/camera-control/start_ccu.sh 5555
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

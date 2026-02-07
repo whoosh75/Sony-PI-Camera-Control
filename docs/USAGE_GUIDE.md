@@ -92,7 +92,7 @@ New commands:
 - `CMD_GET_STATUS` (0x30): battery/media status
 - `CMD_CAPTURE_STILL` (0x31): payload 1 byte (`0`=release, `1`=AF+release)
 
-Status response (11 x uint32):
+Status response (11 x uint32 + model info):
 1) `battery_level` (%)
 2) `battery_remain` (%)
 3) `battery_remain_unit` (1=percent)
@@ -104,6 +104,11 @@ Status response (11 x uint32):
 9) `media_slot2_status`
 10) `media_slot2_remaining_number`
 11) `media_slot2_remaining_time` (minutes)
+
+Followed by:
+- `conn_type` (1=USB, 2=IP/Ethernet, 0=Unknown) [uint8]
+- `model_len` [uint8]
+- `model` (ASCII, `model_len` bytes)
 
 Note: media remaining time is returned in minutes (converted from camera seconds). Battery fields are normalized to percent when available.
 
@@ -123,6 +128,42 @@ Minimal CCU parsing (pseudo-code):
     - `battery_percent = payload[0]` (or payload[1])
     - `slot1_minutes = payload[7]`
     - `slot2_minutes = payload[10]`
+
+## Autostart on Pi boot (systemd)
+1) Copy the service file to systemd:
+    - Source: [systemd/ccu-daemon.service](systemd/ccu-daemon.service)
+    - Destination: /etc/systemd/system/ccu-daemon.service
+
+2) Create the environment file:
+    - Example: [systemd/ccu-daemon.env.example](systemd/ccu-daemon.env.example)
+    - Destination: /etc/ccu-daemon.env
+    - Required: `SONY_PASS`
+
+3) Enable and start:
+    - `sudo systemctl daemon-reload`
+    - `sudo systemctl enable ccu-daemon`
+    - `sudo systemctl start ccu-daemon`
+
+4) Check logs:
+    - `journalctl -u ccu-daemon -f`
+
+## Multiple cameras with different credentials
+Use per-slot environment variables. Slots 0..7 map to CCU targets A..H.
+
+Recommended (Ethernet) per-slot variables:
+- `SONY_ENABLE_N=1`
+- `SONY_CAMERA_IP_N=...`
+- `SONY_PASS_N=...`
+- `SONY_USER_N=...` (optional)
+- `SONY_FINGERPRINT_N=...` (optional)
+- `SONY_ACCEPT_FINGERPRINT_N=1`
+
+Example (two cameras):
+- Slot 0 (A): `SONY_ENABLE_0=1`, `SONY_CAMERA_IP_0=192.168.0.70`, `SONY_PASS_0=Password1`
+- Slot 1 (B): `SONY_ENABLE_1=1`, `SONY_CAMERA_IP_1=192.168.0.71`, `SONY_PASS_1=Password2`
+
+Note: If you omit `SONY_CAMERA_IP_N`, slot selection is not deterministic with multiple cameras.
+If no per-slot variables are set, the daemon falls back to slot 0 using the global `SONY_*` variables.
 
 ## File Locations
 - **API**: `/home/whoosh/camera-control/pi_controller/build/working_sony_api.py`

@@ -36,9 +36,20 @@ if [ "${1-}" = "--diag" ]; then
 fi
 
 if [ -z "${SONY_PASS-}" ]; then
-  echo "ERROR: SONY_PASS not set. Set it in the environment first."
-  echo "Example: SONY_PASS=\"Password1\" ./run_ccu.sh"
-  exit 1
+  any_pass=""
+  for i in 0 1 2 3 4 5 6 7; do
+    v="SONY_PASS_${i}"
+    if [ -n "${!v-}" ]; then
+      any_pass="1"
+      break
+    fi
+  done
+  if [ -z "$any_pass" ]; then
+    echo "ERROR: SONY_PASS not set (and no SONY_PASS_0..7 found)."
+    echo "Example: SONY_PASS=\"Password1\" ./run_ccu.sh"
+    echo "Or per-slot: SONY_PASS_0=\"Password1\" SONY_CAMERA_IP_0=\"192.168.0.70\" ./run_ccu.sh"
+    exit 1
+  fi
 fi
 
 PORT="${1:-5555}"

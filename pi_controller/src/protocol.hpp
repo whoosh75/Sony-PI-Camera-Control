@@ -18,6 +18,7 @@ enum : uint8_t {
   CMD_GET_OPTIONS = 0x20,
   CMD_GET_STATUS = 0x30,
   CMD_CAPTURE_STILL = 0x31,
+  CMD_DISCOVER = 0x32,
 };
 
 enum : uint8_t {

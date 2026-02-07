@@ -47,6 +47,9 @@ public:
   // Stills capture
   bool capture_still(bool with_af);
 
+  const std::string& camera_model() const { return m_camera_model; }
+  const std::string& connection_type() const { return m_connection_type; }
+
   bool is_connected() const { return m_connected && (m_device_handle != 0); }
 
 private:
