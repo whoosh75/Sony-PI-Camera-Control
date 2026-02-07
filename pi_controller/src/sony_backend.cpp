@@ -65,6 +65,26 @@ static std::string normalize_fingerprint(const char* data, CrInt32u len) {
   return out;
 }
 
+static size_t element_size(SCRSDK::CrDataType type) {
+  const CrInt32u base = (type & 0x0FFFu);
+  switch (base) {
+    case SCRSDK::CrDataType_UInt8:
+    case SCRSDK::CrDataType_Int8:
+      return 1;
+    case SCRSDK::CrDataType_UInt16:
+    case SCRSDK::CrDataType_Int16:
+      return 2;
+    case SCRSDK::CrDataType_UInt32:
+    case SCRSDK::CrDataType_Int32:
+      return 4;
+    case SCRSDK::CrDataType_UInt64:
+    case SCRSDK::CrDataType_Int64:
+      return 8;
+    default:
+      return 0;
+  }
+}
+
 static bool connect_camera(SCRSDK::ICrCameraObjectInfo* cam,
                            SCRSDK::IDeviceCallback* cb,
                            const char* user,
@@ -613,6 +633,11 @@ bool SonyBackend::connect_first_camera() {
     return false;
   }
 
+  m_camera_model = camInfoConst->GetModel() ? camInfoConst->GetModel() : "";
+  m_connection_type = camInfoConst->GetConnectionTypeName() ? camInfoConst->GetConnectionTypeName() : "";
+  std::printf("[SonyBackend] Selected camera model=%s conn=%s\n",
+              m_camera_model.c_str(), m_connection_type.c_str());
+
   // Connect requires non-const
   SCRSDK::ICrCameraObjectInfo* camInfo =
       const_cast<SCRSDK::ICrCameraObjectInfo*>(camInfoConst);
@@ -703,6 +728,24 @@ bool SonyBackend::set_runstop(bool run) {
     return false;
   }
 
+  if (m_camera_model == "ILCE-7M4") {
+    const SCRSDK::CrCommandParam movie_param = run
+        ? SCRSDK::CrCommandParam::CrCommandParam_Down
+        : SCRSDK::CrCommandParam::CrCommandParam_Up;
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    auto st = SCRSDK::SendCommand(
+        m_device_handle,
+        SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+        movie_param);
+    if (CR_SUCCEEDED(st)) {
+        std::printf("[SonyBackend] set_runstop(%d): OK (A74 MovieRecord)\n", run ? 1 : 0);
+        return true;
+    }
+    std::printf("[SonyBackend] set_runstop(%d): MovieRecord FAILED for A74 (0x%08X)\n",
+                run ? 1 : 0, (unsigned)st);
+    return false;
+  }
+
   const SCRSDK::CrCommandParam start_param = SCRSDK::CrCommandParam::CrCommandParam_Down;
   const SCRSDK::CrCommandParam stop_param = SCRSDK::CrCommandParam::CrCommandParam_Up;
   const SCRSDK::CrCommandParam movie_param = run ? start_param : stop_param;
@@ -748,6 +791,50 @@ bool SonyBackend::set_runstop(bool run) {
               (unsigned)toggle_result.second,
               (unsigned)st);
   return false;
+}
+
+bool SonyBackend::get_property_options(CrInt32u property_code, PropertyOptions& out) {
+  if (!is_connected()) {
+    std::printf("[SonyBackend] get_property_options: not connected\n");
+    return false;
+  }
+
+  SCRSDK::CrDeviceProperty* props = nullptr;
+  CrInt32 num_props = 0;
+  CrInt32u code = property_code;
+  auto err = SCRSDK::GetSelectDeviceProperties(m_device_handle, 1, &code, &props, &num_props);
+  if (CR_FAILED(err) || !props || num_props <= 0) {
+    std::printf("[SonyBackend] get_property_options: GetSelectDeviceProperties failed 0x%08X\n", (unsigned)err);
+    if (props) SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+    return false;
+  }
+
+  const auto& prop = props[0];
+  out.value_type = prop.GetValueType();
+  out.current_value = (uint32_t)prop.GetCurrentValue();
+  out.values.clear();
+
+  const CrInt8u* raw = prop.GetSetValues();
+  const CrInt32u raw_size = prop.GetSetValueSize();
+  const size_t es = element_size(out.value_type);
+  if (raw && raw_size > 0 && es > 0) {
+    const size_t count = raw_size / es;
+    out.values.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      uint32_t v = 0;
+      const CrInt8u* p = raw + (i * es);
+      switch (es) {
+        case 1: v = *reinterpret_cast<const CrInt8u*>(p); break;
+        case 2: v = *reinterpret_cast<const CrInt16u*>(p); break;
+        case 4: v = *reinterpret_cast<const CrInt32u*>(p); break;
+        case 8: v = (uint32_t)(*reinterpret_cast<const CrInt64u*>(p)); break;
+      }
+      out.values.push_back(v);
+    }
+  }
+
+  SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+  return true;
 }
 
 } // namespace ccu

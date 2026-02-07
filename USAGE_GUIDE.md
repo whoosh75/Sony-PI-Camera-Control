@@ -8,6 +8,13 @@ cd /home/whoosh/camera-control/pi_controller/build
 python3 working_sony_api.py
 ```
 
+### 1b. A74 USB Direct Tests
+```bash
+cd /home/whoosh/camera-control/pi_controller/build
+./a74_usb_record_test     # A74 record start/stop (MovieRecord)
+./a74_usb_settings_test   # ISO/WB/Shutter/FPS validation
+```
+
 ### 2. Custom Scripts
 ```python
 #!/usr/bin/env python3
@@ -65,6 +72,20 @@ for i in range(5):
 - ✅ Sony MPC-2610 (WiFi)
 - ✅ Sony A74 / ILCE-7M4 (USB)
 
+## Options Query (OLED Menus)
+The Teensy can request option lists over UDP using `CMD_GET_OPTIONS`:
+- `OPT_ISO` (0x01)
+- `OPT_WHITE_BALANCE` (0x02)
+- `OPT_SHUTTER` (0x03)
+- `OPT_FPS` (0x04)
+
+Response payload:
+- Byte 0: option id
+- Bytes 1–2: value_type (CRSDK `CrDataType`)
+- Bytes 3–4: count
+- Bytes 5–8: current_value
+- Following: list of 32-bit values (count entries)
+
 ## File Locations
 - **API**: `/home/whoosh/camera-control/pi_controller/build/working_sony_api.py`
 - **Backend**: `/home/whoosh/camera-control/pi_controller/build/working_rec.sh`
@@ -81,6 +102,11 @@ for i in range(5):
 1. Check camera mode (should be in video mode)
 2. Verify storage space on camera
 3. Check recording settings on camera
+
+### A74 Ethernet Connect
+1. Confirm camera IP is reachable (same subnet as the Pi)
+2. Set credentials in the shell environment before connecting
+3. Set `SONY_CAMERA_IP` and (optional) `SONY_CAMERA_MAC` for deterministic connection
 
 ### API Import Errors
 1. Ensure you're in the correct directory: `pi_controller/build`

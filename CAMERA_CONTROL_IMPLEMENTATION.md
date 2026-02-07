@@ -84,6 +84,22 @@ Successfully implemented camera authentication and menu navigation for Sony came
 - ⏹️ **Stop Recording** - Stop video recording  
 - 📊 **Recording Status** - Check current recording state
 
+### **A74 USB-Specific Notes**
+- ✅ **Recording sequence**: `CrCommandId_MovieRecord` with `Down` to start and `Up` to stop
+- ✅ **Success signal**: `OnWarning: MovieRecordingOperation_Result_OK`
+- ⚠️ **Toggle commands**: `CrCommandId_MovieRecButtonToggle/Toggle2` are not valid for A74 USB in this setup
+
+### **ISO / FPS / White Balance / Shutter**
+- ✅ **Direct API** (no CLI): implemented via `SetDeviceProperty` on CRSDK device properties
+- ✅ **Per-camera capability**: values must be validated per model using `GetSelectDeviceProperties` before setting
+- ⚠️ **Mapping tables** in [pi_controller/src/camera_controller.cpp](pi_controller/src/camera_controller.cpp) are placeholders and must be replaced with per-model supported values
+
+### **System Integration (Pi 3B + Teensy 4.1)**
+- **Role split**: Teensy = controller/IO; Pi 3B = CRSDK transport + camera state
+- **Command flow**: Teensy → Pi (serial/USB) → CRSDK → Camera; responses back with success/error codes
+- **Per-camera profiles**: maintain model-specific capability maps and command sequences (e.g., A74 USB = `MovieRecord`)
+- **Validation**: on connect, query and cache supported values per property, then enforce at runtime
+
 ### **Camera Settings**
 - 🎚️ **ISO Control** - Supported values: 100, 200, 400, 800, 1600, 3200, 6400
 - ⚪ **White Balance** - Auto, Daylight, Tungsten, etc. (framework ready)

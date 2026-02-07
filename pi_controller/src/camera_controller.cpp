@@ -150,6 +150,10 @@ bool CameraController::setISO(int iso_value) {
         last_error = "Camera not connected";
         return false;
     }
+
+    if (!ensurePropertySettable(SCRSDK::CrDeviceProperty_IsoSensitivity, "ISO")) {
+        return false;
+    }
     
     std::printf("[%s] 🎚️  Setting ISO to %d...\n", camera_name.c_str(), iso_value);
     
@@ -173,6 +177,10 @@ bool CameraController::setISO(int iso_value) {
 bool CameraController::setWhiteBalance(const std::string& wb) {
     if (!is_connected) {
         last_error = "Camera not connected";
+        return false;
+    }
+
+    if (!ensurePropertySettable(SCRSDK::CrDeviceProperty_WhiteBalance, "WhiteBalance")) {
         return false;
     }
     
@@ -200,6 +208,10 @@ bool CameraController::setFrameRate(const std::string& fps) {
         last_error = "Camera not connected";
         return false;
     }
+
+    if (!ensurePropertySettable(SCRSDK::CrDeviceProperty_Movie_Recording_FrameRateSetting, "FrameRate")) {
+        return false;
+    }
     
     std::printf("[%s] 🎬 Setting frame rate to %s...\n", camera_name.c_str(), fps.c_str());
     
@@ -224,6 +236,10 @@ bool CameraController::setFrameRate(const std::string& fps) {
 bool CameraController::setShutterSpeed(const std::string& speed) {
     if (!is_connected) {
         last_error = "Camera not connected";
+        return false;
+    }
+
+    if (!ensurePropertySettable(SCRSDK::CrDeviceProperty_ShutterSpeed, "ShutterSpeed")) {
         return false;
     }
     
@@ -284,6 +300,35 @@ bool CameraController::setCameraProperty(CrInt32u property, const void* value, C
     if (CR_FAILED(err)) {
         last_error = "SetDeviceProperty failed: " + std::to_string(err);
         std::printf("[%s] ❌ SetDeviceProperty failed: 0x%08X\n", camera_name.c_str(), err);
+        return false;
+    }
+
+    return true;
+}
+
+bool CameraController::ensurePropertySettable(CrInt32u property, const char* label) {
+    if (!is_connected) {
+        last_error = "Camera not connected";
+        return false;
+    }
+
+    SCRSDK::CrDeviceProperty* props = nullptr;
+    CrInt32 num_props = 0;
+    const CrInt32u code = property;
+    auto err = SCRSDK::GetSelectDeviceProperties(device_handle, 1, const_cast<CrInt32u*>(&code), &props, &num_props);
+    if (CR_FAILED(err) || !props || num_props <= 0) {
+        last_error = std::string(label) + " not supported (GetSelectDeviceProperties failed)";
+        std::printf("[%s] ❌ %s not supported: 0x%08X\n", camera_name.c_str(), label, err);
+        if (props) SCRSDK::ReleaseDeviceProperties(device_handle, props);
+        return false;
+    }
+
+    const bool can_set = props[0].IsSetEnableCurrentValue();
+    SCRSDK::ReleaseDeviceProperties(device_handle, props);
+
+    if (!can_set) {
+        last_error = std::string(label) + " is read-only on this camera";
+        std::printf("[%s] ❌ %s is read-only on this camera\n", camera_name.c_str(), label);
         return false;
     }
 

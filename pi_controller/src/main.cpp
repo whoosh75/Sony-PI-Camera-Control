@@ -95,6 +95,89 @@ const uint8_t fail_mask = (selA && !ok) ? 0x01 : 0x00;
       continue;
     }
 
+    if (h.cmd_or_code == CMD_GET_OPTIONS) {
+      if (pl_len < 1) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_BAD_FORMAT, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      const uint8_t opt_id = pl[0];
+      CrInt32u prop_code = 0;
+      const char* label = "";
+      switch (opt_id) {
+        case OPT_ISO:
+          prop_code = SCRSDK::CrDeviceProperty_IsoSensitivity;
+          label = "ISO";
+          break;
+        case OPT_WHITE_BALANCE:
+          prop_code = SCRSDK::CrDeviceProperty_WhiteBalance;
+          label = "WhiteBalance";
+          break;
+        case OPT_SHUTTER:
+          prop_code = SCRSDK::CrDeviceProperty_ShutterSpeed;
+          label = "ShutterSpeed";
+          break;
+        case OPT_FPS:
+          prop_code = SCRSDK::CrDeviceProperty_Movie_Recording_FrameRateSetting;
+          label = "FrameRate";
+          break;
+        default:
+          {
+            uint8_t ap[8] = {0};
+            const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_BAD_FORMAT, ap, sizeof(ap));
+            udp.sendto(txbuf, outn, from);
+            continue;
+          }
+      }
+
+      ccu::SonyBackend::PropertyOptions opts;
+      const bool ok = g_sony.get_property_options(prop_code, opts);
+      if (!ok) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_UNKNOWN, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      auto wr16 = [&](uint8_t* p, uint16_t v) {
+        p[0] = (uint8_t)(v & 0xFF);
+        p[1] = (uint8_t)((v >> 8) & 0xFF);
+      };
+      auto wr32 = [&](uint8_t* p, uint32_t v) {
+        p[0] = (uint8_t)(v & 0xFF);
+        p[1] = (uint8_t)((v >> 8) & 0xFF);
+        p[2] = (uint8_t)((v >> 16) & 0xFF);
+        p[3] = (uint8_t)((v >> 24) & 0xFF);
+      };
+
+      const uint16_t count = (uint16_t)opts.values.size();
+      const size_t payload_len = 1 + 2 + 2 + 4 + (size_t)count * 4;
+      if (payload_len > sizeof(txbuf) - sizeof(Header) - 4) {
+        uint8_t ap[8] = {0};
+        const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_BAD_FORMAT, ap, sizeof(ap));
+        udp.sendto(txbuf, outn, from);
+        continue;
+      }
+
+      uint8_t payload[512] = {0};
+      size_t off = 0;
+      payload[off++] = opt_id;
+      wr16(payload + off, (uint16_t)opts.value_type); off += 2;
+      wr16(payload + off, count); off += 2;
+      wr32(payload + off, opts.current_value); off += 4;
+      for (uint16_t i = 0; i < count; ++i) {
+        wr32(payload + off, opts.values[i]);
+        off += 4;
+      }
+
+      std::printf("OPTIONS %s count=%u current=0x%08X\n", label, (unsigned)count, (unsigned)opts.current_value);
+      const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, payload, off);
+      udp.sendto(txbuf, outn, from);
+      continue;
+    }
+
     // Unknown command
     {
       uint8_t ap[8] = {0};

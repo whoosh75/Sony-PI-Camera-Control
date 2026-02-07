@@ -15,6 +15,14 @@ enum : uint8_t {
 
 enum : uint8_t {
   CMD_RUNSTOP = 0x10,
+  CMD_GET_OPTIONS = 0x20,
+};
+
+enum : uint8_t {
+  OPT_ISO = 0x01,
+  OPT_WHITE_BALANCE = 0x02,
+  OPT_SHUTTER = 0x03,
+  OPT_FPS = 0x04,
 };
 
 enum : uint8_t {

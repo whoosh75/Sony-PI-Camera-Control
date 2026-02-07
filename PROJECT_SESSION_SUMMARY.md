@@ -6,7 +6,9 @@
 1. **Authentication Breakthrough**: 100% reliable connection using `admin/Password1`
 2. **Complete Menu Navigation**: All recording menu access achieved via RemoteCli
 3. **API Documentation Analysis**: Root cause identified - `CrMovieRecButtonToggle_Disable`
-4. **Sony A74 USB Support**: Test program and setup instructions ready
+4. **Sony A74 USB Support**: Direct API recording confirmed with `CrCommandId_MovieRecord`
+5. **Settings API Validation**: ISO/WB/Shutter/FPS set via direct API on A74 USB
+6. **Options Query Protocol**: Added `CMD_GET_OPTIONS` to feed OLED option lists
 
 ### 🔧 CURRENT SETUP
 - **Primary Camera**: Sony MPC-2610 (Ethernet at 192.168.1.110)
@@ -15,6 +17,8 @@
 - **Working Programs**: 
   - `record.sh` - Direct recording via temp files
   - `sony_a74_usb_test.sh` - USB connection testing
+  - `a74_usb_record_test` - A74 USB record start/stop (MovieRecord)
+  - `a74_usb_settings_test` - A74 USB ISO/WB/Shutter/FPS validation
   - RemoteCli authentication scripts
 
 ## 🎯 KEY FINDINGS
@@ -50,9 +54,9 @@ Additional: Ensure camera is in Movie mode (not Photo mode)
 ## 🚀 NEXT STEPS
 
 ### Immediate Actions
-1. **Test Sony A74 USB**: Run the USB test script when camera is available
-2. **Verify API Documentation**: Check if command directory needs re-upload
-3. **Implement Toggle Enable**: Create direct API call to enable `CrMovieRecButtonToggle`
+1. **Surface Option Lists**: Use `CMD_GET_OPTIONS` to populate Teensy OLED menus
+2. **Per-Camera Profiles**: Cache property options per model after connect
+3. **Expand Settings Tests**: Add aperture and focus validation per camera
 
 ### Development Priorities
 1. **Direct API Implementation**: Bypass menu navigation entirely
@@ -108,9 +112,15 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 - 📊 Performance: ~2-3 seconds for full authentication
 
 ### Sony A74 (USB - Pending)
-- 🔄 Connection Test: Ready for execution
-- 📋 Setup Guide: Complete with troubleshooting steps  
-- 🎯 Expected Benefits: Faster connection, no network dependency
+✅ Recording: `CrCommandId_MovieRecord` Down/Up confirmed
+✅ Settings: ISO/WB/Shutter/FPS set via direct API
+📋 Setup Guide: Complete with troubleshooting steps  
+🎯 Expected Benefits: Faster connection, no network dependency
+
+### Sony A74 (Ethernet - In Progress)
+- ✅ Network reachability verified to 192.168.0.70
+- ✅ Camera object created via `CreateCameraObjectInfoEthernetConnection`
+- ⚠️ Connect blocked until credentials are set in environment variables
 
 ## 📚 DOCUMENTATION STATUS
 
@@ -132,13 +142,15 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 3. Recording command execution ✅
 4. Root cause identification ✅
 5. Multi-camera preparation ✅
+6. A74 USB settings control ✅
 
 ### Remaining Objectives
-1. Enable recording toggle via API
-2. Verify Sony A74 USB functionality
+1. Enable recording toggle via API (MPC-2610 path)
+2. Normalize per-model option lists for OLED UI
 3. Optimize recording latency
 4. Implement error recovery
 5. Create production-ready interface
+6. Complete A74 Ethernet authentication
 
 ---
 

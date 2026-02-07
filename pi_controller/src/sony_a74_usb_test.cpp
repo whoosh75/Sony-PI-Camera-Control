@@ -8,9 +8,9 @@ int main() {
     std::cout << "=== Sony A74 USB Connection Test ===\n\n";
     
     // Initialize SDK
-    auto init_result = SCRSDK::Init();
-    if (CR_FAILED(init_result)) {
-        std::cout << "Failed to initialize SDK: " << std::hex << init_result << std::endl;
+    const bool init_ok = SCRSDK::Init();
+    if (!init_ok) {
+        std::cout << "Failed to initialize SDK" << std::endl;
         return -1;
     }
     std::cout << "✓ SDK initialized successfully\n";

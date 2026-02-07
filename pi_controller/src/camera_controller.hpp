@@ -81,6 +81,7 @@ private:
     bool sendCameraCommand(CrInt32u command, CrInt32u param = 0);
     bool setCameraProperty(CrInt32u property, const void* value, CrInt32u size, SCRSDK::CrDataType type);
     bool getCameraProperty(CrInt32u property, void* value, CrInt32u* size);
+    bool ensurePropertySettable(CrInt32u property, const char* label);
     
     // Sony CRSDK property mappings
     CrInt32u mapISOValue(int iso);
