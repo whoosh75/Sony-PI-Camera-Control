@@ -9,16 +9,19 @@
 4. **Sony A74 USB Support**: Direct API recording confirmed with `CrCommandId_MovieRecord`
 5. **Settings API Validation**: ISO/WB/Shutter/FPS set via direct API on A74 USB
 6. **Options Query Protocol**: Added `CMD_GET_OPTIONS` to feed OLED option lists
+7. **USB Stills + Status**: Added still capture and status (battery/media) via UDP daemon
 
 ### 🔧 CURRENT SETUP
 - **Primary Camera**: Sony MPC-2610 (Ethernet at 192.168.1.110)
 - **Secondary Camera**: Sony A74 (USB connection ready for testing)
 - **SDK**: Sony Camera Remote SDK v2.00.00 (Linux ARM64)
 - **Working Programs**: 
+ - **Working Programs**: 
   - `record.sh` - Direct recording via temp files
   - `sony_a74_usb_test.sh` - USB connection testing
   - `a74_usb_record_test` - A74 USB record start/stop (MovieRecord)
   - `a74_usb_settings_test` - A74 USB ISO/WB/Shutter/FPS validation
+  - `a74_usb_stills_test` - A74 USB stills settings + shutter release/AF+release
   - RemoteCli authentication scripts
 
 ## 🎯 KEY FINDINGS
@@ -114,6 +117,8 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 ### Sony A74 (USB - Pending)
 ✅ Recording: `CrCommandId_MovieRecord` Down/Up confirmed
 ✅ Settings: ISO/WB/Shutter/FPS set via direct API
+✅ Stills: Release + S1andRelease confirmed
+✅ Status: Battery/media fields exposed via UDP
 📋 Setup Guide: Complete with troubleshooting steps  
 🎯 Expected Benefits: Faster connection, no network dependency
 
@@ -121,6 +126,7 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 - ✅ Network reachability verified to 192.168.0.70
 - ✅ Camera object created via `CreateCameraObjectInfoEthernetConnection`
 - ⚠️ Connect blocked until credentials are set in environment variables
+- ⚠️ Property access rejected (0x8402) — camera likely not in full remote control mode
 
 ## 📚 DOCUMENTATION STATUS
 

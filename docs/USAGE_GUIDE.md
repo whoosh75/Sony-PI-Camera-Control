@@ -13,6 +13,7 @@ python3 working_sony_api.py
 cd /home/whoosh/camera-control/pi_controller/build
 ./a74_usb_record_test     # A74 record start/stop (MovieRecord)
 ./a74_usb_settings_test   # ISO/WB/Shutter/FPS validation
+./a74_usb_stills_test     # Stills settings + shutter release/AF+release
 ```
 
 ### 2. Custom Scripts
@@ -86,6 +87,26 @@ Response payload:
 - Bytes 5–8: current_value
 - Following: list of 32-bit values (count entries)
 
+## Status + Stills Capture (UDP)
+New commands:
+- `CMD_GET_STATUS` (0x30): battery/media status
+- `CMD_CAPTURE_STILL` (0x31): payload 1 byte (`0`=release, `1`=AF+release)
+
+Status response (11 x uint32):
+1) `battery_level` (%)
+2) `battery_remain` (%)
+3) `battery_remain_unit` (1=percent)
+4) `recording_media`
+5) `movie_recording_media`
+6) `media_slot1_status`
+7) `media_slot1_remaining_number`
+8) `media_slot1_remaining_time`
+9) `media_slot2_status`
+10) `media_slot2_remaining_number`
+11) `media_slot2_remaining_time`
+
+Note: media remaining time is returned as-is (no percent normalization). Battery fields are normalized to percent when available.
+
 ## File Locations
 - **API**: `/home/whoosh/camera-control/pi_controller/build/working_sony_api.py`
 - **Backend**: `/home/whoosh/camera-control/pi_controller/build/working_rec.sh`
@@ -100,6 +121,10 @@ Response payload:
 
 ### Recording Fails
 1. Check camera mode (should be in video mode)
+### Stills Capture Fails
+1. Ensure the physical mode switch is set to stills
+2. Close any camera menus
+3. Confirm PC Remote is enabled for USB
 2. Verify storage space on camera
 3. Check recording settings on camera
 
