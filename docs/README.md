@@ -1,36 +1,39 @@
-# Sony PI - Camera Control for Raspberry Pi - Updated 2026-02-06
+# Sony PI - Camera Control for Raspberry Pi - Updated 2026-02-07
 
-A camera control solution for Sony cinema cameras (MPC-2610, A74) with CLI automation working but **true API blocked by SDK initialization failure**.
+A camera control solution for Sony cameras (MPC-2610, A74) using CRSDK with a UDP daemon for CCU control.
 
-## ⚠️ STATUS: CLI AUTOMATION WORKING - TRUE API BLOCKED
+## ✅ CURRENT STATUS
 
-**CLI Automation (Slow)**: ✅ Working via RemoteCli wrapper  
-**True CRSDK API (Fast)**: ❌ **BLOCKED - SDK initialization fails with error code 1**  
-**Performance Issue**: CLI automation too slow for production use with MPC-2610
+**CRSDK USB (A74)**: ✅ Working (record/settings/stills via UDP daemon)  
+**CRSDK Ethernet (MPC-2610)**: ⚠️ Partial (auth OK; some calls return 0x8402)  
+**UDP Daemon (CCU1)**: ✅ RUNSTOP, GET_OPTIONS, GET_STATUS, CAPTURE_STILL, DISCOVER  
+**Systemd Autostart**: ✅ Service installed and documented  
+**Multi‑camera**: ✅ Per‑slot env configuration (A..H)
 
-### 🔍 Current Technical Status
-- **CLI Automation**: RemoteCli menu navigation works but introduces significant latency
-- **CRSDK Initialization**: All custom programs fail `SCRSDK::Init()` with error code 1  
-- **Library Dependencies**: OpenCV libraries linked correctly but SDK still fails
-- **Performance Gap**: Need direct API calls for fast camera control, not menu automation
-- **Root Blocker**: Unknown SDK initialization requirement preventing true API access
+### 🔍 Current Technical Notes
+- USB control does not require fingerprint/password.
+- Ethernet control still hits 0x8402 for some operations; direct IP connection is preferred.
+- Status payload now appends `conn_type` and `model`.
 
 ---
 
 ## 🎯 Features
 
-### ✅ What Works (CLI Automation)
-- ✅ **Menu Navigation** - RemoteCli successfully navigates camera menus
-- ✅ **Recording Commands** - Start/stop recording via menu automation  
-- ✅ **Photo Capture** - Still photo capture through menu system
-- ✅ **Dual Camera Support** - Both MPC-2610 and A74 detected
-- ✅ **Authentication** - Reliable camera connection established
+### ✅ What Works
+- ✅ **Direct CRSDK API (USB)** - A74 record/settings/stills
+- ✅ **UDP Daemon** - CCU1 protocol: RUNSTOP/GET_OPTIONS/GET_STATUS/CAPTURE_STILL/DISCOVER
+- ✅ **Battery/Media Status** - Normalized to percent + minutes
+- ✅ **Model/Connection Type** - Appended to status payload
+- ✅ **Systemd Autostart** - Service + env file
+- ✅ **Multi‑camera Slots** - Per‑slot env variables (A..H)
 
-### ❌ What's Blocked (True API)
-- ❌ **Direct CRSDK API** - SDK initialization fails in all custom programs
-- ❌ **Fast Performance** - Menu automation introduces unacceptable latency 
-- ❌ **Production Speed** - Current solution too slow for real-world use
-- ❌ **Direct Commands** - Cannot use `SCRSDK::SendCommand()` for instant control
+### CCU ↔ Pi Discovery
+- CCU sends `CMD_DISCOVER` (0x32) when a Sony type is selected.
+- Pi handles discovery and attempts `connect_first_camera()`.
+- Details: [docs/ccu_pi_discovery_transfer.md](docs/ccu_pi_discovery_transfer.md)
+
+### ⚠️ In Progress / Partial
+- ⚠️ **Ethernet Control** - MPC‑2610 still returns 0x8402 for some API calls
 
 ## 🔧 Hardware Requirements
 
@@ -41,59 +44,19 @@ A camera control solution for Sony cinema cameras (MPC-2610, A74) with CLI autom
 
 ## 🚀 Quick Start
 
-### 1. Environment Setup
+### 1. Environment Setup (USB)
 
 ```bash
-# Set camera connection details
-export SONY_CAMERA_IP="192.168.33.94"          # Your camera's IP
-export SONY_CAMERA_MAC="50:26:EF:B8:3F:2C"     # Your camera's MAC address
-export SONY_ACCEPT_FINGERPRINT="1"              # Auto-accept SSH fingerprint
-export SONY_PASS="Password1"                    # Camera SSH password
-
-# Set Sony SDK library path
-export LD_LIBRARY_PATH="/path/to/CrSDK/external/crsdk:/path/to/CrSDK/external/crsdk/CrAdapter:/path/to/CrSDK/external/opencv/Linux"
+export SONY_PASS="Password1"  # Only required for Ethernet; USB ignores it
 ```
 
-### 2. Current Solution: CLI Automation (Slow)
+### 2. Start the UDP daemon
 
 ```bash
-cd pi_controller/build
-
-# Test CLI automation wrapper
-python3 working_sony_api.py
+./start_ccu.sh 5555
 ```
 
-**⚠️ Performance Warning:**
-```
-🎯 Sony Camera API Demo
-=====================
-
-📹 Testing 3-second recording...
-🎥 Recording for 3 seconds...
-🎬 Starting video recording...  # <- Menu navigation delay
-✅ Recording started!             # <- 2-3 second latency
-⏹️ Stopping video recording...
-✅ Recording stopped!
-```
-
-**Issue**: Each command involves full menu navigation through RemoteCli, causing **2-3 second delays** unsuitable for production use.
-
-### 3. Blocked: True API Implementation
-
-```cpp
-// This is what we NEED but fails:
-SCRSDK::SendCommand(device_handle, 
-                   SCRSDK::CrCommandId_MovieRecord, 
-                   SCRSDK::CrCommandParam_Down);  // Instant execution
-```
-
-**Problem**: All SDK initialization attempts fail:
-```bash
-./working_sdk_test
-# Output: Failed to initialize SDK with error: 1
-```
-
-### 4. Build Additional Tools (Optional)
+### 3. Build Additional Tools (Optional)
 
 ```bash
 cd pi_controller

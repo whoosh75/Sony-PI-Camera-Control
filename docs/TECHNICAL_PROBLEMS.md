@@ -1,5 +1,14 @@
 # Technical Problems and Barriers
 
+## Update 2026-02-07
+- CRSDK direct API now works over USB for A74 (record/settings/stills).
+- Ethernet control still returns 0x8402 in some modes.
+- A74 `MovieRecord` can return 0x8402 if camera is in Photo mode or menus are open.
+
+---
+
+## Legacy Notes (Early Investigation)
+
 ## Current Status Summary
 
 ### ✅ Working: CLI Automation (Too Slow)

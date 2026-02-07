@@ -10,6 +10,9 @@
 5. **Settings API Validation**: ISO/WB/Shutter/FPS set via direct API on A74 USB
 6. **Options Query Protocol**: Added `CMD_GET_OPTIONS` to feed OLED option lists
 7. **USB Stills + Status**: Added still capture and status (battery/media) via UDP daemon
+8. **CCU Discovery + Systemd**: Added CMD_DISCOVER handling and systemd autostart
+9. **Multi‑camera Slots**: Per‑slot env configuration (A..H) with per‑target routing
+10. **Doc Cleanup**: Removed duplicate project_docs directory
 
 ### 🔧 CURRENT SETUP
 - **Primary Camera**: Sony MPC-2610 (Ethernet at 192.168.1.110)
@@ -119,6 +122,7 @@ CrDeviceProperty_MovieRecButtonToggleEnableStatus →
 ✅ Settings: ISO/WB/Shutter/FPS set via direct API
 ✅ Stills: Release + S1andRelease confirmed
 ✅ Status: Battery/media fields exposed via UDP (media time in minutes for CCU), with conn_type + model string appended
+✅ Systemd: Daemon can auto‑start at boot using ccu-daemon.service
 📋 Setup Guide: Complete with troubleshooting steps  
 🎯 Expected Benefits: Faster connection, no network dependency
 

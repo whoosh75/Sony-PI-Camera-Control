@@ -1,5 +1,11 @@
 # Project Status Summary - 2026-02-06
 
+## Update 2026-02-07
+- CRSDK USB control works on A74 (record/settings/stills via UDP daemon).
+- Added CMD_DISCOVER handling for CCU → Pi discovery.
+- Status payload appends `conn_type` + `model`.
+- Added systemd autostart and per‑slot env config for multi‑camera.
+
 ## ⚠️ CLI Automation Working - True API Blocked
 
 ### ✅ What Works: CLI Automation (Performance Issues)
