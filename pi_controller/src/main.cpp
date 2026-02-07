@@ -8,6 +8,7 @@
 #include <mutex>
 #include <vector>
 #include <string>
+#include <cstring>
 #include "protocol.hpp"
 #include "udp_server.hpp"
 #include <cstdlib>
