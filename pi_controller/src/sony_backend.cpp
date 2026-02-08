@@ -979,6 +979,7 @@ bool SonyBackend::get_status(Status& out) {
   get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_Status, out.media_slot2_status);
   get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingNumber, out.media_slot2_remaining_number);
   get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingTime, out.media_slot2_remaining_time);
+  get_code(SCRSDK::CrDeviceProperty_RecordingState, out.recording_state);
 
   SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
   return true;

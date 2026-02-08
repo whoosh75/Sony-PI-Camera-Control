@@ -644,6 +644,7 @@ int main(int argc, char** argv) {
       wr32(payload + off, st.media_slot2_status); off += 4;
       wr32(payload + off, st.media_slot2_remaining_number); off += 4;
       wr32(payload + off, st.media_slot2_remaining_time); off += 4;
+      wr32(payload + off, st.recording_state); off += 4;
 
       // Append connection type + model string
       uint8_t conn_type = 0;

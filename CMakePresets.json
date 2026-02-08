@@ -1,0 +1,27 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "pi-debug",
+      "displayName": "Pi Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/pi-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "pi-release",
+      "displayName": "Pi Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/pi-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "pi-debug", "configurePreset": "pi-debug" },
+    { "name": "pi-release", "configurePreset": "pi-release" }
+  ]
+}

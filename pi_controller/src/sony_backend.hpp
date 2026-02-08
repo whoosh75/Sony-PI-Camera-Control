@@ -7,6 +7,7 @@
 // CRSDK
 #include "CRSDK/CameraRemote_SDK.h"
 
+#include "shared/ccu-interface/ccu_link_protocol_v1.h"
 namespace ccu {
 
 class SonyBackend {
@@ -43,6 +44,7 @@ public:
     uint32_t media_slot2_status = 0xFFFFFFFFu;
     uint32_t media_slot2_remaining_number = 0xFFFFFFFFu;
     uint32_t media_slot2_remaining_time = 0xFFFFFFFFu;
+    uint32_t recording_state = 0xFFFFFFFFu;
   };
 
   bool get_status(Status& out);
