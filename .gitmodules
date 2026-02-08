@@ -1,0 +1,3 @@
+[submodule "shared/ccu-interface"]
+	path = shared/ccu-interface
+	url = https://github.com/whoosh75/ccu-interface.git
