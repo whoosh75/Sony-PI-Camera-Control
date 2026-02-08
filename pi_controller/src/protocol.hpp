@@ -19,6 +19,10 @@ enum : uint8_t {
   CMD_GET_STATUS = 0x30,
   CMD_CAPTURE_STILL = 0x31,
   CMD_DISCOVER = 0x32,
+  CMD_LIST_CAMERAS = 0x33,
+  CMD_SET_VALUE = 0x40,
+  CMD_PARAM_STEP = 0x41,
+  CMD_SET_SLOT_CONFIG = 0x50,
 };
 
 enum : uint8_t {
@@ -26,6 +30,7 @@ enum : uint8_t {
   OPT_WHITE_BALANCE = 0x02,
   OPT_SHUTTER = 0x03,
   OPT_FPS = 0x04,
+  OPT_PROJECT_FPS = 0x05,
 };
 
 enum : uint8_t {

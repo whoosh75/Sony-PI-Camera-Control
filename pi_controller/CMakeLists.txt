@@ -20,6 +20,7 @@ add_executable(ccu_daemon
   src/main.cpp
   src/protocol.cpp
   src/udp_server.cpp
+  src/uart_transport.cpp
   src/sony_backend.cpp
 )
 
@@ -101,6 +102,7 @@ target_compile_options(a74_eth_stills_test PRIVATE -fsigned-char)
 target_compile_options(minimal_test PRIVATE -fsigned-char)
 target_compile_options(simple_sdk_test PRIVATE -fsigned-char)
 target_compile_options(simple_recording_test PRIVATE -fsigned-char)
+target_compile_options(direct_sony_api PRIVATE -fsigned-char)
 target_compile_options(remotecli_test PRIVATE -fsigned-char)
 target_compile_options(working_sdk_test PRIVATE -fsigned-char)
 target_compile_options(sony_a74_direct_api PRIVATE -fsigned-char)
@@ -553,11 +555,6 @@ add_executable(camera_control_test
   src/camera_control_test.cpp
   src/camera_controller.cpp
   src/protocol.cpp
-  src/sony_sample/CrDebugString.cpp
-  src/sony_sample/CameraDevice.cpp
-  src/sony_sample/ConnectionInfo.cpp
-  src/sony_sample/MessageDefine.cpp
-  src/sony_sample/Text.cpp
 )
 
 target_compile_options(camera_control_test PRIVATE -fsigned-char)

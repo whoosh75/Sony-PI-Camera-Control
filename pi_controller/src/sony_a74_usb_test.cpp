@@ -1,209 +1,152 @@
 #include "CRSDK/CameraRemote_SDK.h"
+#include "CRSDK/IDeviceCallback.h"
 #include <iostream>
-#include <vector>
 #include <thread>
 #include <chrono>
+#include <string>
+
+namespace {
+struct DeviceCallbackImpl : public SCRSDK::IDeviceCallback {
+    void OnConnected(SCRSDK::DeviceConnectionVersioin version) override {
+        std::cout << "[DeviceCallback] OnConnected(version=" << (int)version << ")\n";
+    }
+    void OnDisconnected(CrInt32u error) override {
+        std::cout << "[DeviceCallback] OnDisconnected(error=0x" << std::hex << error << std::dec << ")\n";
+    }
+    void OnPropertyChanged() override {}
+    void OnLvPropertyChanged() override {}
+    void OnCompleteDownload(CrChar*, CrInt32u) override {}
+    void OnWarning(CrInt32u) override {}
+    void OnWarningExt(CrInt32u, CrInt32, CrInt32, CrInt32) override {}
+    void OnError(CrInt32u) override {}
+    void OnPropertyChangedCodes(CrInt32u, CrInt32u*) override {}
+    void OnLvPropertyChangedCodes(CrInt32u, CrInt32u*) override {}
+    void OnNotifyContentsTransfer(CrInt32u, SCRSDK::CrContentHandle, CrChar*) override {}
+    void OnNotifyFTPTransferResult(CrInt32u, CrInt32u, CrInt32u) override {}
+    void OnNotifyRemoteTransferResult(CrInt32u, CrInt32u, CrChar*) override {}
+    void OnNotifyRemoteTransferResult(CrInt32u, CrInt32u, CrInt8u*, CrInt64u) override {}
+    void OnNotifyRemoteTransferContentsListChanged(CrInt32u, CrInt32u, CrInt32u) override {}
+    void OnReceivePlaybackTimeCode(CrInt32u) override {}
+    void OnReceivePlaybackData(CrInt8u, CrInt32, CrInt8u*, CrInt64, CrInt64, CrInt32, CrInt32) override {}
+    void OnNotifyRemoteFirmwareUpdateResult(CrInt32u, const void*) override {}
+};
+
+static bool get_prop_first_value(const SCRSDK::CrDeviceProperty& prop, uint32_t& out) {
+    const CrInt8u* raw = prop.GetValues();
+    const CrInt32u raw_size = prop.GetValueSize();
+    const SCRSDK::CrDataType type = prop.GetValueType();
+    const CrInt32u base = (type & 0x0FFFu);
+    if (raw && raw_size >= 1) {
+        switch (base) {
+            case SCRSDK::CrDataType_UInt8:
+            case SCRSDK::CrDataType_Int8:
+                out = *reinterpret_cast<const CrInt8u*>(raw);
+                return true;
+            case SCRSDK::CrDataType_UInt16:
+            case SCRSDK::CrDataType_Int16:
+                if (raw_size >= 2) { out = *reinterpret_cast<const CrInt16u*>(raw); return true; }
+                break;
+            case SCRSDK::CrDataType_UInt32:
+            case SCRSDK::CrDataType_Int32:
+                if (raw_size >= 4) { out = *reinterpret_cast<const CrInt32u*>(raw); return true; }
+                break;
+            default:
+                break;
+        }
+    }
+    out = (uint32_t)prop.GetCurrentValue();
+    return true;
+}
+}
 
 int main() {
     std::cout << "=== Sony A74 USB Connection Test ===\n\n";
-    
-    // Initialize SDK
-    const bool init_ok = SCRSDK::Init();
-    if (!init_ok) {
-        std::cout << "Failed to initialize SDK" << std::endl;
+
+    if (!SCRSDK::Init()) {
+        std::cout << "Failed to initialize SDK\n";
         return -1;
     }
     std::cout << "✓ SDK initialized successfully\n";
-    
-    // Enumerate USB connected cameras
+
     SCRSDK::ICrEnumCameraObjectInfo* camera_list = nullptr;
     auto enum_result = SCRSDK::EnumCameraObjects(&camera_list);
     if (CR_FAILED(enum_result) || !camera_list) {
-        std::cout << "Failed to enumerate cameras: " << std::hex << enum_result << std::endl;
+        std::cout << "Failed to enumerate cameras: 0x" << std::hex << enum_result << std::dec << "\n";
         SCRSDK::Release();
         return -1;
     }
-    
-    auto camera_count = camera_list->GetCount();
+
+    const auto camera_count = camera_list->GetCount();
     std::cout << "Found " << camera_count << " camera(s)\n";
-    
     if (camera_count == 0) {
-        std::cout << "\nNo cameras detected. Please check:\n";
-        std::cout << "1. Sony A74 is connected via USB cable\n";
-        std::cout << "2. Camera is powered on\n";
-        std::cout << "3. USB Connection Mode is set to 'Remote Shooting' or 'PC Remote'\n";
-        std::cout << "4. USB drivers are installed (Windows only)\n";
         camera_list->Release();
         SCRSDK::Release();
         return -1;
     }
-    
-    // Display camera information
-    for (int i = 0; i < camera_count; ++i) {
-        auto camera_info = camera_list->GetCameraObjectInfo(i);
-        if (camera_info) {
-            std::cout << "\nCamera " << (i + 1) << ":\n";
-            
-            auto model_ptr = camera_info->GetModel();
-            if (model_ptr) {
-                std::cout << "  Model: " << model_ptr << std::endl;
-            }
-            
-            auto conn_type_ptr = camera_info->GetConnectionTypeName();
-            if (conn_type_ptr) {
-                std::cout << "  Connection Type: " << conn_type_ptr << std::endl;
-                
-                std::string conn_type(conn_type_ptr);
-                if (conn_type.find("USB") != std::string::npos || conn_type.find("usb") != std::string::npos) {
-                    std::cout << "  ✓ USB Connection detected\n";
+
+    for (CrInt32u i = 0; i < camera_count; ++i) {
+        const auto* info = camera_list->GetCameraObjectInfo(i);
+        if (!info) continue;
+        std::cout << "\nCamera " << (i + 1) << ":\n";
+        std::cout << "  Model: " << (info->GetModel() ? info->GetModel() : "") << "\n";
+        std::cout << "  Connection Type: " << (info->GetConnectionTypeName() ? info->GetConnectionTypeName() : "") << "\n";
+    }
+
+    std::cout << "\n=== Testing Connection to Camera 1 ===\n";
+    auto* camera_info = const_cast<SCRSDK::ICrCameraObjectInfo*>(camera_list->GetCameraObjectInfo(0));
+    if (!camera_info) {
+        camera_list->Release();
+        SCRSDK::Release();
+        return -1;
+    }
+
+    DeviceCallbackImpl cb;
+    SCRSDK::CrDeviceHandle handle = 0;
+    auto connect_result = SCRSDK::Connect(camera_info, &cb, &handle,
+                                                                                SCRSDK::CrSdkControlMode_Remote,
+                                                                                SCRSDK::CrReconnecting_ON,
+                                                                                nullptr, nullptr, nullptr, 0);
+    if (CR_FAILED(connect_result) || handle == 0) {
+        std::cout << "Failed to connect: 0x" << std::hex << connect_result << std::dec << "\n";
+        camera_list->Release();
+        SCRSDK::Release();
+        return -1;
+    }
+    std::cout << "✓ Connected\n";
+
+    std::cout << "\n=== Testing Movie Record Command ===\n";
+    auto st_down = SCRSDK::SendCommand(handle,
+                                                                         SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+                                                                         SCRSDK::CrCommandParam::CrCommandParam_Down);
+    std::cout << "MovieRecord DOWN: 0x" << std::hex << st_down << std::dec << "\n";
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    SCRSDK::CrDeviceProperty* props = nullptr;
+    CrInt32 num_props = 0;
+    auto prop_err = SCRSDK::GetDeviceProperties(handle, &props, &num_props);
+    if (!CR_FAILED(prop_err) && props && num_props > 0) {
+        for (CrInt32 i = 0; i < num_props; ++i) {
+            if (props[i].GetCode() == SCRSDK::CrDeviceProperty_RecordingState) {
+                uint32_t v = 0;
+                if (get_prop_first_value(props[i], v)) {
+                    std::cout << "Recording State: " << v << "\n";
                 }
+                break;
             }
         }
     }
-    
-    // Test connection to first camera
-    if (camera_count > 0) {
-        std::cout << "\n=== Testing Connection to Camera 1 ===\n";
-        
-        auto camera_info = camera_list->GetCameraObjectInfo(0);
-        SCRSDK::ICrCameraDevice* camera = nullptr;
-        
-        auto connect_result = SCRSDK::Connect(camera_info, &camera);
-        if (CR_FAILED(connect_result) || !camera) {
-            std::cout << "Failed to connect to camera: " << std::hex << connect_result << std::endl;
-        } else {
-            std::cout << "✓ Successfully connected to Sony A74\n";
-            
-            // Test getting device properties
-            std::cout << "\n=== Testing Device Properties ===\n";
-            
-            // Check MovieRecButtonToggleEnableStatus
-            SCRSDK::CrDeviceProperty prop;
-            prop.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_MovieRecButtonToggleEnableStatus);
-            
-            auto prop_result = camera->GetDeviceProperty(&prop);
-            if (CR_SUCCEEDED(prop_result)) {
-                auto* values = static_cast<CrInt8u*>(prop.GetValue());
-                if (values && prop.GetValueSize() > 0) {
-                    std::cout << "Movie Rec Button Toggle Status: ";
-                    if (values[0] == SCRSDK::CrMovieRecButtonToggle::CrMovieRecButtonToggle_Enable) {
-                        std::cout << "ENABLED ✓\n";
-                    } else if (values[0] == SCRSDK::CrMovieRecButtonToggle::CrMovieRecButtonToggle_Disable) {
-                        std::cout << "DISABLED (This is why recording failed!)\n";
-                        
-                        // Try to enable it
-                        std::cout << "Attempting to enable Movie Rec Button Toggle...\n";
-                        SCRSDK::CrDeviceProperty enable_prop;
-                        enable_prop.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_MovieRecButtonToggleEnableStatus);
-                        CrInt8u enable_value = SCRSDK::CrMovieRecButtonToggle::CrMovieRecButtonToggle_Enable;
-                        enable_prop.SetValue(&enable_value);
-                        enable_prop.SetValueSize(sizeof(enable_value));
-                        
-                        auto set_result = camera->SetDeviceProperty(&enable_prop);
-                        if (CR_SUCCEEDED(set_result)) {
-                            std::cout << "✓ Movie Rec Button Toggle enabled!\n";
-                        } else {
-                            std::cout << "Failed to enable Movie Rec Button Toggle: " << std::hex << set_result << std::endl;
-                            std::cout << "This property may be read-only on this camera model.\n";
-                        }
-                    } else {
-                        std::cout << "UNKNOWN VALUE (" << (int)values[0] << ")\n";
-                    }
-                }
-            } else {
-                std::cout << "Failed to get Movie Rec Button Toggle status: " << std::hex << prop_result << std::endl;
-            }
-            
-            // Check Recording State
-            prop.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_RecordingState);
-            prop_result = camera->GetDeviceProperty(&prop);
-            if (CR_SUCCEEDED(prop_result)) {
-                auto* values = static_cast<CrInt8u*>(prop.GetValue());
-                if (values && prop.GetValueSize() > 0) {
-                    std::cout << "Recording State: ";
-                    if (values[0] == SCRSDK::CrRecordingState::CrRecordingState_Recording) {
-                        std::cout << "RECORDING\n";
-                    } else if (values[0] == SCRSDK::CrRecordingState::CrRecordingState_NotRecording) {
-                        std::cout << "NOT RECORDING\n";
-                    } else {
-                        std::cout << "UNKNOWN (" << (int)values[0] << ")\n";
-                    }
-                }
-            } else {
-                std::cout << "Could not get Recording State (property may not be supported)\n";
-            }
-            
-            // Test Movie Record Command
-            std::cout << "\n=== Testing Movie Record Command ===\n";
-            std::cout << "Sending movie record command...\n";
-            auto record_result = camera->SendCommand(SCRSDK::CrCommandId::CrCommandId_MovieRecord);
-            if (CR_SUCCEEDED(record_result)) {
-                std::cout << "✓ Movie record command sent successfully\n";
-                std::cout << "Check your camera - it should now be recording!\n";
-                
-                // Wait a bit for the command to take effect
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                
-                // Check recording state again
-                prop.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_RecordingState);
-                prop_result = camera->GetDeviceProperty(&prop);
-                if (CR_SUCCEEDED(prop_result)) {
-                    auto* values = static_cast<CrInt8u*>(prop.GetValue());
-                    if (values && prop.GetValueSize() > 0) {
-                        std::cout << "Recording State after command: ";
-                        if (values[0] == SCRSDK::CrRecordingState::CrRecordingState_Recording) {
-                            std::cout << "RECORDING ✓ SUCCESS!\n";
-                        } else {
-                            std::cout << "NOT RECORDING (command may have failed)\n";
-                        }
-                    }
-                }
-                
-                // Stop recording after 5 seconds
-                std::cout << "Recording for 5 seconds...\n";
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-                
-                std::cout << "Sending stop recording command...\n";
-                auto stop_result = camera->SendCommand(SCRSDK::CrCommandId::CrCommandId_MovieRecord);
-                if (CR_SUCCEEDED(stop_result)) {
-                    std::cout << "✓ Movie stop command sent successfully\n";
-                } else {
-                    std::cout << "Failed to send stop command: " << std::hex << stop_result << std::endl;
-                }
-                
-            } else {
-                std::cout << "Failed to send movie record command: " << std::hex << record_result << std::endl;
-                std::cout << "Error code meaning: ";
-                
-                // Provide some common error explanations
-                switch (record_result) {
-                    case 0x80004005:
-                        std::cout << "E_FAIL - Command failed, possibly due to camera state\n";
-                        break;
-                    case 0x80070057:
-                        std::cout << "E_INVALIDARG - Invalid argument\n";
-                        break;
-                    default:
-                        std::cout << "Unknown error code\n";
-                        break;
-                }
-            }
-            
-            // Disconnect
-            SCRSDK::Disconnect(&camera);
-            std::cout << "\n✓ Disconnected from camera\n";
-        }
-    }
-    
-    // Cleanup
+    if (props) SCRSDK::ReleaseDeviceProperties(handle, props);
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    auto st_up = SCRSDK::SendCommand(handle,
+                                                                     SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+                                                                     SCRSDK::CrCommandParam::CrCommandParam_Up);
+    std::cout << "MovieRecord UP: 0x" << std::hex << st_up << std::dec << "\n";
+
+    SCRSDK::Disconnect(handle);
+    SCRSDK::ReleaseDevice(handle);
     camera_list->Release();
     SCRSDK::Release();
-    
     std::cout << "\n=== Test Complete ===\n";
-    std::cout << "\nIf recording didn't work, try:\n";
-    std::cout << "1. Set camera to Movie mode manually\n";
-    std::cout << "2. Check camera menu settings for remote recording permission\n";
-    std::cout << "3. Ensure sufficient memory card space\n";
-    
     return 0;
 }

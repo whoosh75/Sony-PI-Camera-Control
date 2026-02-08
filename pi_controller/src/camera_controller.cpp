@@ -17,6 +17,7 @@ CameraController::~CameraController() {
     disconnect();
 }
 
+
 bool CameraController::connectViaIP(const std::string& ip, const std::string& mac, 
                                    SCRSDK::CrCameraDeviceModelList model) {
     std::printf("[%s] Connecting via IP: %s\n", camera_name.c_str(), ip.c_str());
@@ -119,24 +120,18 @@ bool CameraController::capturePhoto() {
     
     std::printf("[%s] 📸 Capturing photo...\n", camera_name.c_str());
     
-    // Send shutter press (half press first, then full press)
+    // Send shutter press (full press then release)
     auto err1 = SCRSDK::SendCommand(device_handle,
-                                   SCRSDK::CrCommandId::CrCommandId_Release,
-                                   SCRSDK::CrCommandParam::CrCommandParam_HalfPress);
-    
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Focus time
-    
-    auto err2 = SCRSDK::SendCommand(device_handle,
                                    SCRSDK::CrCommandId::CrCommandId_Release,
                                    SCRSDK::CrCommandParam::CrCommandParam_Down);
     
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
-    auto err3 = SCRSDK::SendCommand(device_handle,
+    auto err2 = SCRSDK::SendCommand(device_handle,
                                    SCRSDK::CrCommandId::CrCommandId_Release,
                                    SCRSDK::CrCommandParam::CrCommandParam_Up);
     
-    if (CR_FAILED(err1) || CR_FAILED(err2) || CR_FAILED(err3)) {
+    if (CR_FAILED(err1) || CR_FAILED(err2)) {
         last_error = "Photo capture failed";
         return false;
     }
@@ -379,16 +374,16 @@ CrInt32u CameraController::mapISOValue(int iso) {
 }
 
 CrInt32u CameraController::mapWhiteBalance(const std::string& wb) {
-    if (wb == "Auto" || wb == "AWB") return CrWhiteBalance_AWB;
-    if (wb == "Daylight" || wb == "5600K") return CrWhiteBalance_Daylight;
-    if (wb == "Shade" || wb == "7000K") return CrWhiteBalance_Shadow;
-    if (wb == "Cloudy" || wb == "6000K") return CrWhiteBalance_Cloudy;
-    if (wb == "Tungsten" || wb == "3200K") return CrWhiteBalance_Tungsten;
-    if (wb == "Fluorescent_WarmWhite") return CrWhiteBalance_Fluorescent_WarmWhite;
-    if (wb == "Fluorescent_CoolWhite") return CrWhiteBalance_Fluorescent_CoolWhite;
-    if (wb == "Fluorescent_DayWhite") return CrWhiteBalance_Fluorescent_DayWhite;
-    if (wb == "Fluorescent_Daylight") return CrWhiteBalance_Fluorescent_Daylight;
-    if (wb == "Flash") return CrWhiteBalance_Flush;
+    if (wb == "Auto" || wb == "AWB") return SCRSDK::CrWhiteBalance_AWB;
+    if (wb == "Daylight" || wb == "5600K") return SCRSDK::CrWhiteBalance_Daylight;
+    if (wb == "Shade" || wb == "7000K") return SCRSDK::CrWhiteBalance_Shadow;
+    if (wb == "Cloudy" || wb == "6000K") return SCRSDK::CrWhiteBalance_Cloudy;
+    if (wb == "Tungsten" || wb == "3200K") return SCRSDK::CrWhiteBalance_Tungsten;
+    if (wb == "Fluorescent_WarmWhite") return SCRSDK::CrWhiteBalance_Fluorescent_WarmWhite;
+    if (wb == "Fluorescent_CoolWhite") return SCRSDK::CrWhiteBalance_Fluorescent_CoolWhite;
+    if (wb == "Fluorescent_DayWhite") return SCRSDK::CrWhiteBalance_Fluorescent_DayWhite;
+    if (wb == "Fluorescent_Daylight") return SCRSDK::CrWhiteBalance_Fluorescent_Daylight;
+    if (wb == "Flash") return SCRSDK::CrWhiteBalance_Flush;
     return 0;
 }
 
@@ -458,7 +453,7 @@ CrInt32u CameraController::mapShutterSpeed(const std::string& speed) {
     if (speed == "20" || speed == "20s") return 0x00000031;
     if (speed == "25" || speed == "25s") return 0x00000032;
     if (speed == "30" || speed == "30s") return 0x00000033;
-    if (speed == "Bulb") return CrShutterSpeed_Bulb;
+    if (speed == "Bulb") return SCRSDK::CrShutterSpeed_Bulb;
     return 0;  // Unknown speed
 }
 
@@ -525,4 +520,196 @@ void CameraController::disconnect() {
         camera_info->Release();
         camera_info = nullptr;
     }
+}
+
+bool CameraController::connectViaUSB() {
+    std::printf("[%s] Connecting via USB...\n", camera_name.c_str());
+
+    static bool sdk_inited = false;
+    if (!sdk_inited) {
+        if (!SCRSDK::Init()) {
+            last_error = "SCRSDK::Init failed";
+            return false;
+        }
+        sdk_inited = true;
+    }
+
+    SCRSDK::ICrEnumCameraObjectInfo* camera_list = nullptr;
+    auto err = SCRSDK::EnumCameraObjects(&camera_list);
+    if (CR_FAILED(err) || !camera_list || camera_list->GetCount() == 0) {
+        last_error = "No USB cameras found";
+        if (camera_list) camera_list->Release();
+        return false;
+    }
+
+    auto info = camera_list->GetCameraObjectInfo(0);
+    if (!info) {
+        last_error = "Failed to get camera info";
+        camera_list->Release();
+        return false;
+    }
+
+    SCRSDK::CrDeviceHandle handle = 0;
+    err = SCRSDK::Connect(const_cast<SCRSDK::ICrCameraObjectInfo*>(info),
+                          &callback,
+                          &handle);
+    camera_list->Release();
+
+    if (CR_FAILED(err)) {
+        last_error = "Camera USB connection failed: " + std::to_string(err);
+        return false;
+    }
+
+    device_handle = handle;
+    is_connected = true;
+    std::printf("[%s] ✅ Connected via USB! Device handle: %u\n", camera_name.c_str(), device_handle);
+    return true;
+}
+
+bool CameraController::sendCameraCommand(CrInt32u command, CrInt32u param) {
+    if (!is_connected) {
+        last_error = "Camera not connected";
+        return false;
+    }
+
+    auto err = SCRSDK::SendCommand(device_handle,
+                                   static_cast<SCRSDK::CrCommandId>(command),
+                                   static_cast<SCRSDK::CrCommandParam>(param));
+    if (CR_FAILED(err)) {
+        last_error = "SendCommand failed: " + std::to_string(err);
+        return false;
+    }
+
+    return true;
+}
+
+bool CameraController::getCameraProperty(CrInt32u property, void* value, CrInt32u* size) {
+    if (!is_connected) {
+        last_error = "Camera not connected";
+        return false;
+    }
+    if (!value || !size || *size <= 0) {
+        last_error = "Invalid property buffer";
+        return false;
+    }
+
+    SCRSDK::CrDeviceProperty* props = nullptr;
+    CrInt32 num_props = 0;
+    CrInt32u code = property;
+    auto err = SCRSDK::GetSelectDeviceProperties(device_handle, 1, &code, &props, &num_props);
+    if (CR_FAILED(err) || !props || num_props <= 0) {
+        last_error = "GetSelectDeviceProperties failed: " + std::to_string(err);
+        if (props) SCRSDK::ReleaseDeviceProperties(device_handle, props);
+        return false;
+    }
+
+    const CrInt64u current = props[0].GetCurrentValue();
+    SCRSDK::ReleaseDeviceProperties(device_handle, props);
+
+    if (*size >= static_cast<CrInt32u>(sizeof(CrInt64u))) {
+        *static_cast<CrInt64u*>(value) = current;
+        *size = sizeof(CrInt64u);
+        return true;
+    }
+    if (*size >= static_cast<CrInt32u>(sizeof(CrInt32u))) {
+        *static_cast<CrInt32u*>(value) = static_cast<CrInt32u>(current & 0xFFFFFFFFu);
+        *size = sizeof(CrInt32u);
+        return true;
+    }
+    if (*size >= static_cast<CrInt32u>(sizeof(CrInt16u))) {
+        *static_cast<CrInt16u*>(value) = static_cast<CrInt16u>(current & 0xFFFFu);
+        *size = sizeof(CrInt16u);
+        return true;
+    }
+    if (*size >= static_cast<CrInt32u>(sizeof(CrInt8u))) {
+        *static_cast<CrInt8u*>(value) = static_cast<CrInt8u>(current & 0xFFu);
+        *size = sizeof(CrInt8u);
+        return true;
+    }
+
+    last_error = "Property buffer too small";
+    return false;
+}
+
+RecordingState CameraController::getRecordingState() {
+    CrInt32u value = 0;
+    CrInt32u size = sizeof(value);
+    if (!getCameraProperty(SCRSDK::CrDeviceProperty_RecordingState, &value, &size)) {
+        return RecordingState::UNKNOWN;
+    }
+
+    if (value == 0) return RecordingState::STOPPED;
+    return RecordingState::RECORDING;
+}
+
+CameraStatus CameraController::getCameraStatus() {
+    CameraStatus status{};
+    status.recording_state = getRecordingState();
+    status.camera_ready = is_connected;
+    status.battery_level = -1;
+
+    CrInt32u value32 = 0;
+    CrInt32u size32 = sizeof(value32);
+
+    if (getCameraProperty(SCRSDK::CrDeviceProperty_IsoSensitivity, &value32, &size32)) {
+        const CrInt32u iso = value32 & 0xFFFFFFu;
+        status.iso_value = std::to_string(iso);
+    }
+
+    size32 = sizeof(value32);
+    if (getCameraProperty(SCRSDK::CrDeviceProperty_WhiteBalance, &value32, &size32)) {
+        status.white_balance = std::to_string(value32);
+    }
+
+    size32 = sizeof(value32);
+    if (getCameraProperty(SCRSDK::CrDeviceProperty_Movie_Recording_FrameRateSetting, &value32, &size32)) {
+        status.frame_rate = std::to_string(value32);
+    }
+
+    size32 = sizeof(value32);
+    if (getCameraProperty(SCRSDK::CrDeviceProperty_FNumber, &value32, &size32)) {
+        status.aperture = std::to_string(value32);
+    }
+
+    size32 = sizeof(value32);
+    if (getCameraProperty(SCRSDK::CrDeviceProperty_ShutterSpeed, &value32, &size32)) {
+        status.shutter_speed = std::to_string(value32);
+    }
+
+    return status;
+}
+
+bool CameraController::isCameraReady() {
+    return is_connected;
+}
+
+bool CameraController::setAperture(float f_stop) {
+    if (!is_connected) {
+        last_error = "Camera not connected";
+        return false;
+    }
+
+    if (!ensurePropertySettable(SCRSDK::CrDeviceProperty_FNumber, "Aperture")) {
+        return false;
+    }
+
+    const CrInt16u ap = mapAperture(f_stop);
+    if (ap == 0) {
+        last_error = "Invalid aperture value";
+        return false;
+    }
+
+    if (!setCameraProperty(SCRSDK::CrDeviceProperty_FNumber,
+                           &ap,
+                           sizeof(ap),
+                           SCRSDK::CrDataType_UInt16Array)) {
+        return false;
+    }
+
+    return true;
+}
+
+CrInt16u CameraController::mapAperture(float f_stop) {
+    if (f_stop <= 0.0f) return 0;
+    return static_cast<CrInt16u>(std::lround(f_stop * 100.0f));
 }

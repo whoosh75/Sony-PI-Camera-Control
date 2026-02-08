@@ -1,5 +1,6 @@
 #pragma once
 #include "CRSDK/CameraRemote_SDK.h"
+#include "CRSDK/IDeviceCallback.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -38,10 +39,16 @@ struct CameraStatus {
 
 class CameraController {
 private:
+    struct DeviceCallback : public SCRSDK::IDeviceCallback {
+        void OnConnected(SCRSDK::DeviceConnectionVersioin) override {}
+        void OnWarning(CrInt32u) override {}
+    };
+
     SCRSDK::ICrCameraObjectInfo* camera_info;
     SCRSDK::CrDeviceHandle device_handle;
     bool is_connected;
     std::string camera_name;
+    DeviceCallback callback;
 
 public:
     CameraController(const std::string& name = "Camera");

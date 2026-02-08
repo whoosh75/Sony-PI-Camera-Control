@@ -1,44 +1,52 @@
 #include "CRSDK/CameraRemote_SDK.h"
+#include "CRSDK/IDeviceCallback.h"
 #include <iostream>
 #include <string>
 #include <vector>
 #include <thread>
 #include <chrono>
-#include <memory>
 
-// Minimal callback implementation (based on RemoteCli)
-class DirectAPICallback : public SCRSDK::IDeviceCallback
-{
+// Minimal callback implementation
+class DirectAPICallback : public SCRSDK::IDeviceCallback {
 public:
-    DirectAPICallback() = default;
-    virtual ~DirectAPICallback() = default;
-
-    void OnConnected(SCRSDK::DeviceConnectionVersioin version) override {
+    void OnConnected(SCRSDK::DeviceConnectionVersioin) override {
         std::cout << "[Callback] Connected" << std::endl;
     }
-    
-    void OnDisconnected(SCRSDK::CrError error) override {
-        std::cout << "[Callback] Disconnected: " << static_cast<int>(error) << std::endl;
+
+    void OnDisconnected(CrInt32u error) override {
+        std::cout << "[Callback] Disconnected: 0x" << std::hex << error << std::dec << std::endl;
     }
-    
+
     void OnPropertyChanged() override {}
     void OnLvPropertyChanged() override {}
-    void OnCompleteDownload(SCRSDK::CrCommandId commandId, SCRSDK::CrError error) override {}
-    void OnNotifyContentsTransfer(SCRSDK::CrCommandId commandId, SCRSDK::CrCommandParam currentStep, SCRSDK::CrCommandParam totalStep) override {}
-    
-    void OnWarning(SCRSDK::CrWarningId warningId) override {
+    void OnCompleteDownload(CrChar*, CrInt32u) override {}
+    void OnNotifyContentsTransfer(CrInt32u, SCRSDK::CrContentHandle, CrChar*) override {}
+    void OnNotifyFTPTransferResult(CrInt32u, CrInt32u, CrInt32u) override {}
+    void OnNotifyRemoteTransferResult(CrInt32u, CrInt32u, CrChar*) override {}
+    void OnNotifyRemoteTransferResult(CrInt32u, CrInt32u, CrInt8u*, CrInt64u) override {}
+    void OnNotifyRemoteTransferContentsListChanged(CrInt32u, CrInt32u, CrInt32u) override {}
+    void OnReceivePlaybackTimeCode(CrInt32u) override {}
+    void OnReceivePlaybackData(CrInt8u, CrInt32, CrInt8u*, CrInt64, CrInt64, CrInt32, CrInt32) override {}
+    void OnNotifyRemoteFirmwareUpdateResult(CrInt32u, const void*) override {}
+
+    void OnWarning(CrInt32u warningId) override {
         if (warningId == SCRSDK::CrWarning_MovieRecordingOperation_Result_OK) {
             std::cout << "✅ Movie recording operation: OK" << std::endl;
             recording_ok = true;
         }
     }
-    
+
+    void OnWarningExt(CrInt32u, CrInt32, CrInt32, CrInt32) override {}
+    void OnError(CrInt32u) override {}
+    void OnPropertyChangedCodes(CrInt32u, CrInt32u*) override {}
+    void OnLvPropertyChangedCodes(CrInt32u, CrInt32u*) override {}
+
     bool recording_ok = false;
 };
 
 class DirectSonyAPI {
 private:
-    std::vector<SCRSDK::ICrCameraObjectInfo*> camera_list;
+    std::vector<const SCRSDK::ICrCameraObjectInfo*> camera_list;
     SCRSDK::CrDeviceHandle device_handle = 0;
     DirectAPICallback callback;
     bool connected = false;
@@ -63,7 +71,7 @@ public:
         SCRSDK::ICrEnumCameraObjectInfo* enum_camera_list = nullptr;
         auto result = SCRSDK::EnumCameraObjects(&enum_camera_list);
         
-        if (result != SCRSDK::CrError_None || !enum_camera_list) {
+        if (CR_FAILED(result) || !enum_camera_list) {
             std::cout << "❌ Failed to enumerate cameras" << std::endl;
             return false;
         }
@@ -84,7 +92,7 @@ public:
     
     bool connectToSonyA74() {
         // Find Sony A74
-        SCRSDK::ICrCameraObjectInfo* sony_a74 = nullptr;
+        const SCRSDK::ICrCameraObjectInfo* sony_a74 = nullptr;
         for (auto camera : camera_list) {
             if (std::string(camera->GetModel()) == "ILCE-7M4") {
                 sony_a74 = camera;
@@ -99,9 +107,14 @@ public:
         
         std::cout << "🔗 Connecting to Sony A74..." << std::endl;
         
-        auto result = SCRSDK::Connect(sony_a74, &callback, &device_handle);
-        if (result != SCRSDK::CrError_None) {
-            std::cout << "❌ Failed to connect: " << static_cast<int>(result) << std::endl;
+        auto result = SCRSDK::Connect(const_cast<SCRSDK::ICrCameraObjectInfo*>(sony_a74),
+                                      &callback,
+                                      &device_handle,
+                                      SCRSDK::CrSdkControlMode_Remote,
+                                      SCRSDK::CrReconnecting_ON,
+                                      nullptr, nullptr, nullptr, 0);
+        if (CR_FAILED(result) || device_handle == 0) {
+            std::cout << "❌ Failed to connect: 0x" << std::hex << result << std::dec << std::endl;
             return false;
         }
         
@@ -119,9 +132,11 @@ public:
         std::cout << "🎬 Starting recording (API: MovieRecord Down)..." << std::endl;
         callback.recording_ok = false;
         
-        auto result = SCRSDK::SendCommand(device_handle, SCRSDK::CrCommandId_MovieRecord, SCRSDK::CrCommandParam_Down);
-        if (result != SCRSDK::CrError_None) {
-            std::cout << "❌ Start recording failed: " << static_cast<int>(result) << std::endl;
+        auto result = SCRSDK::SendCommand(device_handle,
+                                          SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+                                          SCRSDK::CrCommandParam::CrCommandParam_Down);
+        if (CR_FAILED(result)) {
+            std::cout << "❌ Start recording failed: 0x" << std::hex << result << std::dec << std::endl;
             return false;
         }
         
@@ -147,9 +162,11 @@ public:
         std::cout << "⏹️ Stopping recording (API: MovieRecord Up)..." << std::endl;
         callback.recording_ok = false;
         
-        auto result = SCRSDK::SendCommand(device_handle, SCRSDK::CrCommandId_MovieRecord, SCRSDK::CrCommandParam_Up);
-        if (result != SCRSDK::CrError_None) {
-            std::cout << "❌ Stop recording failed: " << static_cast<int>(result) << std::endl;
+        auto result = SCRSDK::SendCommand(device_handle,
+                                          SCRSDK::CrCommandId::CrCommandId_MovieRecord,
+                                          SCRSDK::CrCommandParam::CrCommandParam_Up);
+        if (CR_FAILED(result)) {
+            std::cout << "❌ Stop recording failed: 0x" << std::hex << result << std::dec << std::endl;
             return false;
         }
         
@@ -170,6 +187,7 @@ public:
         if (connected && device_handle) {
             std::cout << "🔌 Disconnecting..." << std::endl;
             SCRSDK::Disconnect(device_handle);
+            SCRSDK::ReleaseDevice(device_handle);
             connected = false;
         }
     }

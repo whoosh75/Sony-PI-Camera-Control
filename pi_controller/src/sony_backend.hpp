@@ -28,6 +28,9 @@ public:
 
   bool get_property_options(CrInt32u property_code, PropertyOptions& out);
 
+  bool set_property_value(CrInt32u property_code, uint32_t value);
+  bool step_property_value(CrInt32u property_code, int8_t step);
+
   struct Status {
     uint32_t battery_level = 0xFFFFFFFFu;
     uint32_t battery_remain = 0xFFFFFFFFu;

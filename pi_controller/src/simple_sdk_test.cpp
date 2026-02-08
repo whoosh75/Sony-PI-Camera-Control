@@ -1,4 +1,4 @@
-#include "CameraRemote_SDK.h"
+#include "CRSDK/CameraRemote_SDK.h"
 #include <iostream>
 
 int main() {

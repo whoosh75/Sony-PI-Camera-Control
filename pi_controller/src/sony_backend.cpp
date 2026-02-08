@@ -879,6 +879,67 @@ bool SonyBackend::get_property_options(CrInt32u property_code, PropertyOptions& 
   return true;
 }
 
+bool SonyBackend::set_property_value(CrInt32u property_code, uint32_t value) {
+  if (!is_connected()) {
+    std::printf("[SonyBackend] set_property_value: not connected\n");
+    return false;
+  }
+
+  SCRSDK::CrDeviceProperty* props = nullptr;
+  CrInt32 num_props = 0;
+  CrInt32u code = property_code;
+  auto err = SCRSDK::GetSelectDeviceProperties(m_device_handle, 1, &code, &props, &num_props);
+  if (CR_FAILED(err) || !props || num_props <= 0) {
+    std::printf("[SonyBackend] set_property_value: GetSelectDeviceProperties failed 0x%08X\n", (unsigned)err);
+    if (props) SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+    return false;
+  }
+
+  bool ok = false;
+  SCRSDK::CrDeviceProperty& prop = props[0];
+  if (!prop.IsSetEnableCurrentValue()) {
+    std::printf("[SonyBackend] set_property_value: property 0x%08X not settable\n", (unsigned)property_code);
+  } else {
+    prop.SetCurrentValue((CrInt64u)value);
+    auto st = SCRSDK::SetDeviceProperty(m_device_handle, &prop);
+    if (!CR_FAILED(st)) {
+      ok = true;
+    } else {
+      std::printf("[SonyBackend] set_property_value: SetDeviceProperty failed 0x%08X\n", (unsigned)st);
+    }
+  }
+
+  SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
+  return ok;
+}
+
+bool SonyBackend::step_property_value(CrInt32u property_code, int8_t step) {
+  if (step == 0) return true;
+  PropertyOptions opts;
+  if (!get_property_options(property_code, opts)) return false;
+  if (opts.values.empty()) return false;
+
+  size_t idx = 0;
+  bool found = false;
+  for (size_t i = 0; i < opts.values.size(); ++i) {
+    if (opts.values[i] == opts.current_value) {
+      idx = i;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    idx = (step > 0) ? 0u : (opts.values.size() - 1u);
+  }
+
+  int next = (int)idx + (int)step;
+  if (next < 0) next = 0;
+  if (next >= (int)opts.values.size()) next = (int)opts.values.size() - 1;
+
+  const uint32_t next_value = opts.values[(size_t)next];
+  return set_property_value(property_code, next_value);
+}
+
 bool SonyBackend::get_status(Status& out) {
   if (!is_connected()) {
     std::printf("[SonyBackend] get_status: not connected\n");
