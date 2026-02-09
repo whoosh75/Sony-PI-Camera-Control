@@ -623,6 +623,11 @@ int main(int argc, char** argv) {
       st.battery_remain_unit = 1; // percent
       st.media_slot1_remaining_time = media1_time;
       st.media_slot2_remaining_time = media2_time;
+      if (st.recording_state == 0xFFFFFFFFu) {
+        // Freeze baseline (2026-02-08): when camera recording_state is
+        // unavailable, keep CCU UI aligned to the last accepted RUNSTOP state.
+        st.recording_state = g_run_state[slot] ? 1u : 0u;
+      }
 
       auto wr32 = [&](uint8_t* p, uint32_t v) {
         p[0] = (uint8_t)(v & 0xFF);
@@ -661,6 +666,15 @@ int main(int argc, char** argv) {
         std::memcpy(payload + off, model.data(), model_len);
         off += model_len;
       }
+
+      std::printf("[ccu_daemon] STATUS tx seq=%u slot=%d target=0x%02X rec=0x%08X rec_media=0x%08X conn=%u model=%s\n",
+                  h.seq,
+                  slot,
+                  h.target_mask,
+                  (unsigned)st.recording_state,
+                  (unsigned)st.recording_media,
+                  (unsigned)conn_type,
+                  model.c_str());
 
       const size_t outn = build_resp_ack(txbuf, sizeof(txbuf), h.seq, h.target_mask, RESP_OK, payload, off);
       if (use_uart) uart.send_frame(txbuf, outn);
@@ -881,4 +895,3 @@ int main(int argc, char** argv) {
   else udp.close();
   return 0;
 }
-

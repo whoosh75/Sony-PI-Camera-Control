@@ -49,6 +49,8 @@ Teensy 4.1 acts as a hardware controller (buttons/encoders/OLED) and communicate
 - A74 USB recording works via `CrCommandId_MovieRecord` (Down/Up).
 - A74 ISO/WB/Shutter/FPS values can be queried and set on the Pi.
 - `CMD_GET_OPTIONS` is implemented on the Pi and returns per-camera option lists.
+- A74 REC behavior is frozen as of 2026-02-08. Do not change run/stop semantics without re-validation.
+- Freeze reference: `docs/A74_RECORD_FREEZE_2026-02-08.md`
 
 ## To Be Added (Next)
 - Set-Value command (ISO/WB/Shutter/FPS) so Teensy can apply selections directly.

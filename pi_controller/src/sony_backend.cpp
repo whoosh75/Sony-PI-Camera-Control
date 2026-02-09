@@ -71,6 +71,17 @@ static const char* crerror_category(SCRSDK::CrError err) {
   }
 }
 
+// A74 recording behavior freeze (validated on hardware):
+// - Date: 2026-02-08
+// - Camera: ILCE-7M4 over USB via ccu_daemon
+// - Known-good sequence:
+//   1) Prepare PriorityKeySettings=PCRemote and ExposureProgramMode=Movie_P
+//   2) Send MovieRecord Down(start) / Up(stop)
+//   3) If API returns InvalidCalled (0x8402), fallback through toggle commands
+// Do not alter command ordering/semantics without re-validating on hardware.
+static constexpr const char* kA74FrozenModel = "ILCE-7M4";
+static constexpr SCRSDK::CrError kA74InvalidCalled = SCRSDK::CrError_Api_InvalidCalled;
+
 static std::string normalize_fingerprint(const char* data, CrInt32u len) {
   if (!data || len == 0) return std::string();
   std::string out(data, data + len);
@@ -101,21 +112,73 @@ static size_t element_size(SCRSDK::CrDataType type) {
 }
 
 static bool get_prop_first_value(const SCRSDK::CrDeviceProperty& prop, uint32_t& out) {
-  const CrInt8u* raw = prop.GetValues();
-  const CrInt32u raw_size = prop.GetValueSize();
-  const SCRSDK::CrDataType type = prop.GetValueType();
-  const size_t es = element_size(type);
-  if (raw && raw_size >= es && es > 0) {
-    switch (es) {
-      case 1: out = *reinterpret_cast<const CrInt8u*>(raw); return true;
-      case 2: out = *reinterpret_cast<const CrInt16u*>(raw); return true;
-      case 4: out = *reinterpret_cast<const CrInt32u*>(raw); return true;
-      case 8: out = (uint32_t)(*reinterpret_cast<const CrInt64u*>(raw)); return true;
-      default: break;
-    }
-  }
+  // For status polling we need the current camera value, not the first entry
+  // from the value list (which is often just the first enum option).
   out = (uint32_t)prop.GetCurrentValue();
   return true;
+}
+
+static bool read_recording_flags(SCRSDK::CrDeviceHandle device_handle,
+                                 uint32_t& recording_state,
+                                 uint32_t& recorder_main_status,
+                                 bool& is_recording) {
+  recording_state = 0xFFFFFFFFu;
+  recorder_main_status = 0xFFFFFFFFu;
+  is_recording = false;
+
+  SCRSDK::CrDeviceProperty* props = nullptr;
+  CrInt32 num_props = 0;
+  CrInt32u codes[2] = {
+    SCRSDK::CrDeviceProperty_RecordingState,
+    SCRSDK::CrDeviceProperty_RecorderMainStatus
+  };
+
+  const auto err = SCRSDK::GetSelectDeviceProperties(device_handle, 2, codes, &props, &num_props);
+  if (CR_FAILED(err) || !props || num_props <= 0) {
+    if (props) SCRSDK::ReleaseDeviceProperties(device_handle, props);
+    return false;
+  }
+
+  for (CrInt32 i = 0; i < num_props; ++i) {
+    uint32_t v = 0xFFFFFFFFu;
+    if (!get_prop_first_value(props[i], v)) continue;
+
+    if (props[i].GetCode() == SCRSDK::CrDeviceProperty_RecordingState) {
+      recording_state = v;
+    } else if (props[i].GetCode() == SCRSDK::CrDeviceProperty_RecorderMainStatus) {
+      recorder_main_status = v;
+    }
+  }
+
+  SCRSDK::ReleaseDeviceProperties(device_handle, props);
+
+  const bool rec_state_known = (recording_state != 0xFFFFFFFFu);
+  const bool rec_main_known = (recorder_main_status != 0xFFFFFFFFu);
+  if (!rec_state_known && !rec_main_known) return false;
+
+  is_recording = ((rec_state_known && recording_state != 0u) ||
+                  (rec_main_known && recorder_main_status != 0u));
+  return true;
+}
+
+static void try_prepare_recording_mode(SCRSDK::CrDeviceHandle device_handle) {
+  // Best-effort: some bodies reject MovieRecord until PC Remote priority/mode
+  // is asserted.
+  SCRSDK::CrDeviceProperty priority;
+  priority.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_PriorityKeySettings);
+  priority.SetCurrentValue(SCRSDK::CrPriorityKeySettings::CrPriorityKey_PCRemote);
+  priority.SetValueType(SCRSDK::CrDataType::CrDataType_UInt32Array);
+  auto st_priority = SCRSDK::SetDeviceProperty(device_handle, &priority);
+  std::printf("[SonyBackend] prepare_recording: PriorityKeySettings=PCRemote st=0x%08X\n",
+              (unsigned)st_priority);
+
+  SCRSDK::CrDeviceProperty exp_mode;
+  exp_mode.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_ExposureProgramMode);
+  exp_mode.SetCurrentValue(SCRSDK::CrExposureProgram::CrExposure_Movie_P);
+  exp_mode.SetValueType(SCRSDK::CrDataType::CrDataType_UInt16Array);
+  auto st_exp = SCRSDK::SetDeviceProperty(device_handle, &exp_mode);
+  std::printf("[SonyBackend] prepare_recording: ExposureProgramMode=Movie_P st=0x%08X\n",
+              (unsigned)st_exp);
 }
 
 static bool connect_camera(SCRSDK::ICrCameraObjectInfo* cam,
@@ -770,22 +833,77 @@ bool SonyBackend::set_runstop(bool run) {
     return false;
   }
 
-  if (m_camera_model == "ILCE-7M4") {
+  if (m_camera_model == kA74FrozenModel) {
     const SCRSDK::CrCommandParam movie_param = run
         ? SCRSDK::CrCommandParam::CrCommandParam_Down
         : SCRSDK::CrCommandParam::CrCommandParam_Up;
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    uint32_t rec_state = 0xFFFFFFFFu;
+    uint32_t rec_main = 0xFFFFFFFFu;
+    bool is_recording = false;
+    if (read_recording_flags(m_device_handle, rec_state, rec_main, is_recording) && is_recording == run) {
+      std::printf("[SonyBackend] set_runstop(%d): already target state (rec_state=0x%08X rec_main=0x%08X)\n",
+                  run ? 1 : 0, (unsigned)rec_state, (unsigned)rec_main);
+      return true;
+    }
+
+    try_prepare_recording_mode(m_device_handle);
+    // A74 expects direct button semantics: Down=start, Up=stop.
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
     auto st = SCRSDK::SendCommand(
         m_device_handle,
         SCRSDK::CrCommandId::CrCommandId_MovieRecord,
         movie_param);
-    if (CR_SUCCEEDED(st)) {
-        std::printf("[SonyBackend] set_runstop(%d): OK (A74 MovieRecord)\n", run ? 1 : 0);
-        return true;
+    std::printf("[SonyBackend] set_runstop(%d): A74 MovieRecord param=%s st=0x%08X\n",
+                run ? 1 : 0,
+                run ? "Down(start)" : "Up(stop)",
+                (unsigned)st);
+
+    if (CR_FAILED(st)) {
+      // Try to enable toggle command support, then fallback command paths.
+      SCRSDK::CrDeviceProperty enable_prop;
+      enable_prop.SetCode(SCRSDK::CrDevicePropertyCode::CrDeviceProperty_MovieRecButtonToggleEnableStatus);
+      enable_prop.SetValueType(SCRSDK::CrDataType_UInt8);
+      enable_prop.SetCurrentValue(SCRSDK::CrMovieRecButtonToggle_Enable);
+      auto st_enable = SCRSDK::SetDeviceProperty(m_device_handle, &enable_prop);
+      std::printf("[SonyBackend] set_runstop(%d): enable toggle st=0x%08X\n",
+                  run ? 1 : 0, (unsigned)st_enable);
+
+      auto send_toggle = [&](SCRSDK::CrCommandId cmd_id, const char* label) {
+        auto st_down = SCRSDK::SendCommand(
+            m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Down);
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        auto st_up = SCRSDK::SendCommand(
+            m_device_handle, cmd_id, SCRSDK::CrCommandParam::CrCommandParam_Up);
+        std::printf("[SonyBackend] set_runstop(%d): %s down=0x%08X up=0x%08X\n",
+                    run ? 1 : 0, label, (unsigned)st_down, (unsigned)st_up);
+        return (!CR_FAILED(st_down) || !CR_FAILED(st_up));
+      };
+
+      bool any_ok = false;
+      any_ok = send_toggle(SCRSDK::CrCommandId::CrCommandId_MovieRecButtonToggle, "MovieRecButtonToggle") || any_ok;
+      any_ok = send_toggle(SCRSDK::CrCommandId::CrCommandId_MovieRecButtonToggle2, "MovieRecButtonToggle2") || any_ok;
+      any_ok = send_toggle(SCRSDK::CrCommandId::CrCommandId_StreamButton, "StreamButton") || any_ok;
+
+      if (!any_ok) {
+        const char* allow_invalid = std::getenv("SONY_ALLOW_INVALID_CALLED");
+        if (allow_invalid && allow_invalid[0] == '1' && st == kA74InvalidCalled) {
+          std::printf("[SonyBackend] set_runstop(%d): treating MovieRecord 0x8402 as success (SONY_ALLOW_INVALID_CALLED=1)\n",
+                      run ? 1 : 0);
+          any_ok = true;
+        }
+      }
+      if (!any_ok) return false;
     }
-    std::printf("[SonyBackend] set_runstop(%d): MovieRecord FAILED for A74 (0x%08X)\n",
-                run ? 1 : 0, (unsigned)st);
-    return false;
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    if (read_recording_flags(m_device_handle, rec_state, rec_main, is_recording)) {
+      std::printf("[SonyBackend] set_runstop(%d): post-cmd rec_state=0x%08X rec_main=0x%08X is_recording=%d\n",
+                  run ? 1 : 0, (unsigned)rec_state, (unsigned)rec_main, is_recording ? 1 : 0);
+    } else {
+      std::printf("[SonyBackend] set_runstop(%d): post-cmd recording flags unavailable\n", run ? 1 : 0);
+    }
+    return true;
   }
 
   const SCRSDK::CrCommandParam start_param = SCRSDK::CrCommandParam::CrCommandParam_Down;
@@ -980,6 +1098,12 @@ bool SonyBackend::get_status(Status& out) {
   get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingNumber, out.media_slot2_remaining_number);
   get_code(SCRSDK::CrDeviceProperty_MediaSLOT2_RemainingTime, out.media_slot2_remaining_time);
   get_code(SCRSDK::CrDeviceProperty_RecordingState, out.recording_state);
+  uint32_t recorder_main_status = 0xFFFFFFFFu;
+  get_code(SCRSDK::CrDeviceProperty_RecorderMainStatus, recorder_main_status);
+  if ((out.recording_state == 0xFFFFFFFFu || out.recording_state == 0u) &&
+      recorder_main_status != 0xFFFFFFFFu) {
+    out.recording_state = recorder_main_status;
+  }
 
   SCRSDK::ReleaseDeviceProperties(m_device_handle, props);
   return true;

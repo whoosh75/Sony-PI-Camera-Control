@@ -36,6 +36,12 @@ All integer fields are **uint32 little‑endian** unless noted.
 - `0` as **not recording**
 - any non‑zero value as **recording** (unless you choose to map specific vendor codes)
 
+For A74 USB freeze baseline, `recording_state` is now validated in CCU serial as:
+- `0` => `IDLE`
+- `1` => `RECORDING`
+
+Reference freeze doc: `docs/A74_RECORD_FREEZE_2026-02-08.md`
+
 ## Required CCU Changes
 1. **Status parsing**: insert a 4‑byte `recording_state` field **after** `media_slot2_remaining_time`.
 2. **UI update**: set REC indicator based on `recording_state` from the status poll.

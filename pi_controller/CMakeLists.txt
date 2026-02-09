@@ -4,6 +4,10 @@ project(ccu_daemon LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Allow includes like "shared/ccu-interface/ccu_link_protocol_v1.h"
+# when building from the pi_controller subproject.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 # ---- Sony CRSDK root (your existing SDK folder) ----
 set(CRSDK_ROOT "" CACHE PATH "Path to Sony CRSDK bundle root")
 

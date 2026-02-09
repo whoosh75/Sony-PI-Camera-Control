@@ -5,6 +5,7 @@ A camera control solution for Sony cameras (MPC-2610, A74) using CRSDK with a UD
 ## ✅ CURRENT STATUS
 
 **CRSDK USB (A74)**: ✅ Working (record/settings/stills via UDP daemon)  
+**A74 Record Start/Stop**: ✅ Frozen baseline (validated 2026-02-08)  
 **CRSDK Ethernet (MPC-2610)**: ⚠️ Partial (auth OK; some calls return 0x8402)  
 **UDP Daemon (CCU1)**: ✅ RUNSTOP/GET_OPTIONS/GET_STATUS/CAPTURE_STILL/DISCOVER  
 **Systemd Autostart**: ✅ Service + env file  
@@ -175,6 +176,9 @@ See [`SHORTCUTS.md`](SHORTCUTS.md) for:
 - **Development shortcuts**
 - **Common build commands**
 - **Testing procedures**
+
+### Freeze Baseline
+See [`docs/A74_RECORD_FREEZE_2026-02-08.md`](docs/A74_RECORD_FREEZE_2026-02-08.md) for the locked A74 REC behavior and non-regression rule.
 
 ## 🎬 Camera Operations (Coming Soon)
 

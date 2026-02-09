@@ -1,5 +1,12 @@
 # USAGE GUIDE - Sony Camera API
 
+## A74 Recording Freeze
+- A74 (`ILCE-7M4`, USB) REC behavior is frozen and validated.
+- Start: `CMD_RUNSTOP` payload `1` -> camera records.
+- Stop: `CMD_RUNSTOP` payload `0` -> camera stops.
+- Status: `CMD_GET_STATUS.recording_state` updates quickly (`0` idle, non-zero recording).
+- Baseline reference: [`docs/A74_RECORD_FREEZE_2026-02-08.md`](docs/A74_RECORD_FREEZE_2026-02-08.md)
+
 ## Quick Start
 
 ### 1. Basic Recording

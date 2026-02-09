@@ -5,6 +5,13 @@
 - Ethernet control still returns 0x8402 in some modes.
 - A74 `MovieRecord` can return 0x8402 if camera is in Photo mode or menus are open.
 
+## Update 2026-02-08 (Freeze Applied)
+- A74 (`ILCE-7M4`, USB) record start/stop is now validated working via CCU `CMD_RUNSTOP`.
+- REC status polling now updates correctly (`rec_raw 0 -> 1 -> 0`).
+- Daemon now applies record-mode preparation and fallback command sequence for A74.
+- This behavior is frozen; do not change without hardware re-validation.
+- Reference: `docs/A74_RECORD_FREEZE_2026-02-08.md`
+
 ---
 
 ## Legacy Notes (Early Investigation)

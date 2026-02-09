@@ -1,5 +1,11 @@
 # Project Status Summary - 2026-02-06
 
+## Update 2026-02-08 (A74 Freeze)
+- A74 (`ILCE-7M4`, USB) REC start/stop now works from CCU and is frozen.
+- Verified transitions in CCU serial: `rec_raw 0 -> 1 -> 0`.
+- `CMD_GET_STATUS.recording_state` updates quickly and consistently.
+- Freeze baseline reference: `docs/A74_RECORD_FREEZE_2026-02-08.md`
+
 ## Update 2026-02-07
 - CRSDK USB control works on A74 (record/settings/stills via UDP daemon).
 - Added CMD_DISCOVER handling for CCU → Pi discovery.
